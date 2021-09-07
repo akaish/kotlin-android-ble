@@ -1,0 +1,3 @@
+include ':kotlin-android-ble'
+include ':app'
+rootProject.name = "KBle"
