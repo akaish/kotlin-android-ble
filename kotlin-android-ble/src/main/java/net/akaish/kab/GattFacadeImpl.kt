@@ -31,25 +31,26 @@ import androidx.annotation.RequiresApi
 import kotlinx.coroutines.*
 import kotlinx.coroutines.channels.BroadcastChannel
 import kotlinx.coroutines.flow.MutableStateFlow
-import net.akaish.kab.IGattFacade.Companion.CLIENT_CHARACTERISTIC_CONFIG_UUID
-import net.akaish.kab.IGattFacade.Companion.MTU_DEFAULT
-import net.akaish.kab.IGattFacade.Companion.MTU_MAX
-import net.akaish.kab.IGattFacade.Companion.MTU_MIN
-import net.akaish.kab.IGattFacade.Companion.RSSI_UNKNOWN
+import net.akaish.kab.BleConstants.Companion.CLIENT_CHARACTERISTIC_CONFIG_UUID
+import net.akaish.kab.BleConstants.Companion.MTU_DEFAULT
+import net.akaish.kab.BleConstants.Companion.MTU_MAX
+import net.akaish.kab.BleConstants.Companion.MTU_MIN
+import net.akaish.kab.BleConstants.Companion.RSSI_UNKNOWN
 import net.akaish.kab.model.*
 import net.akaish.kab.result.*
 import net.akaish.kab.utility.Hex
 import net.akaish.kab.utility.ILogger
-import java.util.*
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.collections.HashMap
 import kotlin.coroutines.resume
 
 @ExperimentalCoroutinesApi
 class GattFacadeImpl(device: BluetoothDevice,
-                     private val l: ILogger? = null,
-                     private val applicationServices: MutableList<ApplicationCharacteristic> = mutableListOf()) : IGattFacade {
+                     override val disableExceptions: AtomicBoolean,
+                     override val l: ILogger? = null,
+                     override val applicationServices: MutableList<ApplicationCharacteristic> = mutableListOf()) : IGattFacade {
 
     //----------------------------------------------------------------------------------------------
     // Gatt facade implementation
@@ -77,6 +78,7 @@ class GattFacadeImpl(device: BluetoothDevice,
         withTimeout(timeoutMs) {
             result = readRemoteRSSI(timeoutMs)
         }
+        result.throwException(disableExceptions.get())
         return result
     }
 
@@ -100,28 +102,47 @@ class GattFacadeImpl(device: BluetoothDevice,
         withTimeout(timeoutMs) {
             result = requestMTU(mtuParam, timeoutMs)
         }
+        result.throwException(disableExceptions.get())
         return result
     }
 
     override val notificationChannel = BroadcastChannel<Pair<BluetoothGattCharacteristic, ByteArray>>(1)
 
-    override suspend fun subscribe(target: Long, timeout: Long, timeUnit: TimeUnit) : SubscriptionResult =
-        subscribe(characteristics[target.toString()]!!, timeout, timeUnit)
+    override suspend fun subscribe(target: Long, timeout: Long, timeUnit: TimeUnit) : SubscriptionResult {
+        val result = subscribe(characteristics[target.toString()]!!, timeout, timeUnit)
+        result.throwException(disableExceptions.get())
+        return result
+    }
 
-    override suspend fun subscribe(target: TargetCharacteristic, timeout: Long, timeUnit: TimeUnit) : SubscriptionResult =
-        subscribe(characteristics[target.toString()]!!, timeout, timeUnit)
+    override suspend fun subscribe(target: TargetCharacteristic, timeout: Long, timeUnit: TimeUnit) : SubscriptionResult {
+        val result = subscribe(characteristics[target.toString()]!!, timeout, timeUnit)
+        result.throwException(disableExceptions.get())
+        return result
+    }
 
-    override suspend fun read(target: Long, timeout: Long, timeUnit: TimeUnit) : ReadResult =
-        read(characteristics[target.toString()]!!, timeout, timeUnit)
+    override suspend fun read(target: Long, timeout: Long, timeUnit: TimeUnit) : ReadResult {
+        val result = read(characteristics[target.toString()]!!, timeout, timeUnit)
+        result.throwException(disableExceptions.get())
+        return result
+    }
 
-    override suspend fun read(target: TargetCharacteristic, timeout: Long, timeUnit: TimeUnit) : ReadResult =
-        read(characteristics[target.toString()]!!, timeout, timeUnit)
+    override suspend fun read(target: TargetCharacteristic, timeout: Long, timeUnit: TimeUnit) : ReadResult {
+        val result = read(characteristics[target.toString()]!!, timeout, timeUnit)
+        result.throwException(disableExceptions.get())
+        return result
+    }
 
-    override suspend fun write(target: Long, bytes: ByteArray, timeout: Long, timeUnit: TimeUnit) =
-        write(characteristics[target.toString()]!!, bytes, timeout, timeUnit)
+    override suspend fun write(target: Long, bytes: ByteArray, timeout: Long, timeUnit: TimeUnit) : WriteResult {
+        val result = write(characteristics[target.toString()]!!, bytes, timeout, timeUnit)
+        result.throwException(disableExceptions.get())
+        return result
+    }
 
-    override suspend fun write(target: TargetCharacteristic, bytes: ByteArray, timeout: Long, timeUnit: TimeUnit) =
-        write(characteristics[target.toString()]!!, bytes, timeout, timeUnit)
+    override suspend fun write(target: TargetCharacteristic, bytes: ByteArray, timeout: Long, timeUnit: TimeUnit) : WriteResult {
+        val result = write(characteristics[target.toString()]!!, bytes, timeout, timeUnit)
+        result.throwException(disableExceptions.get())
+        return result
+    }
 
     //----------------------------------------------------------------------------------------------
     // Internal implementation

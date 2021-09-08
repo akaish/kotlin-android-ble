@@ -23,6 +23,7 @@
  */
 package net.akaish.kab.utility
 
+@Suppress("Unused")
 object Hex {
     private val hexArray = "0123456789ABCDEF".toCharArray()
     private const val BYTE_DELIMITER = '-'
@@ -55,6 +56,7 @@ object Hex {
      * @param delimiter byte pair delimiter
      * @return string representation of byte array
      */
+    @Suppress("Unused")
     fun toPrettyHexString(bytes: ByteArray?, delimiter: Char?): String {
         if (bytes == null) return ""
         val hexChars = CharArray(bytes.size * 2)

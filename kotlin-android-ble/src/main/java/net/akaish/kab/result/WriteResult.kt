@@ -23,15 +23,22 @@
  */
 package net.akaish.kab.result
 
+import net.akaish.kab.throwable.*
+import net.akaish.kab.utility.GattStatusToString
+
 /**
  * Gatt characteristic write result: [net.akaish.kab.GattFacadeImpl.write] method
  */
-sealed class WriteResult {
+sealed class WriteResult : BLEResult {
 
     /**
      * Device running other gatt operation
      */
-    object DeviceIsBusy : WriteResult()
+    object DeviceIsBusy : WriteResult() {
+        override fun toThrowable(): BleException? = BleDeviceIsBusyException(toString(), this)
+
+        override fun toString() : String = "WriteResult: Device is busy: other gatt operation in progress!"
+    }
 
     /**
      * Write error while executing [net.akaish.kab.GattFacadeImpl.write]
@@ -51,7 +58,16 @@ sealed class WriteResult {
          * [android.bluetooth.BluetoothGatt.GATT_FAILURE]
          */
         @Suppress("Unused")
-        val status: Int) : WriteResult()
+        val status: Int) : WriteResult() {
+
+        override fun toThrowable(): BleException? = BleErrorException(toString(), this)
+
+        override fun toString() : String = "WriteResult: GATT error ${
+            GattStatusToString.gattStatusToHumanReadableString(
+                status
+            )
+        } [$status DEC 0x${status.toString(16)} HEX]!"
+    }
 
     /**
      * Wrapper for exception thrown during [net.akaish.kab.GattFacadeImpl.write]
@@ -61,7 +77,12 @@ sealed class WriteResult {
          * Original throwable
          */
         @Suppress("Unused")
-        val tr: Throwable) : WriteResult()
+        val tr: Throwable) : WriteResult() {
+
+        override fun toThrowable(): BleException? = BleOperationException(toString(), this)
+
+        override fun toString() : String = "WriteResult: exception caught while executing: ${tr.localizedMessage}!"
+    }
 
     /**
      * Operation timeout during running [net.akaish.kab.GattFacadeImpl.write]
@@ -71,15 +92,31 @@ sealed class WriteResult {
          * Timeout value in ms
          */
         @Suppress("Unused")
-        val timeoutMs: Long) : WriteResult()
+        val timeoutMs: Long) : WriteResult() {
+
+        override fun toThrowable(): BleException? = BleTimeoutException(toString(), this)
+
+        override fun toString() : String = "WriteResult: timeout ($timeoutMs ms)!"
+    }
+
 
     /**
      * Characteristic write success
      */
-    object WriteSuccess : WriteResult()
+    object WriteSuccess : WriteResult() {
+
+        override fun toThrowable(): BleException? = null
+
+        override fun toString() = "WriteResult: success"
+    }
 
     /**
      * Internal error
      */
-    object WrongCharacteristicCallback : WriteResult()
+    object WrongCharacteristicCallback : WriteResult() {
+
+        override fun toThrowable(): BleException? = BleInternalErrorException(toString(), this)
+
+        override fun toString() = "WriteResult: WrongCharacteristicCallback internal error"
+    }
 }

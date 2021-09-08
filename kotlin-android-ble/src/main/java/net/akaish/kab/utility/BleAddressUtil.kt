@@ -25,7 +25,7 @@ package net.akaish.kab.utility
 
 import java.nio.ByteBuffer
 
-object BleAddressUtil {
+internal object BleAddressUtil {
     private const val HEX_ONLY_PATTERN = "[^0-9a-fA-F]"
     private const val UID_LENGTH = 6
     private const val UID_PREFIX_LENGTH = 2

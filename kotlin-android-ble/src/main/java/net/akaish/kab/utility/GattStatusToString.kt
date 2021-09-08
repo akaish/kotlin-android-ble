@@ -25,7 +25,7 @@ package net.akaish.kab.utility
 
 import android.bluetooth.BluetoothGatt
 
-object GattStatusToString {
+internal object GattStatusToString {
     fun gattStatusToHumanReadableString(status: Int) : String = when(status) {
         BluetoothGatt.GATT_SUCCESS -> "GATT SUCCESS"
         BluetoothGatt.GATT_READ_NOT_PERMITTED -> "GATT READ NOT PERMITTED"

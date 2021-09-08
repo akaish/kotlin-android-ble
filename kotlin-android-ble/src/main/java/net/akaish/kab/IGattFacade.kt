@@ -30,38 +30,29 @@ import androidx.annotation.IntRange
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.channels.BroadcastChannel
 import kotlinx.coroutines.flow.StateFlow
+import net.akaish.kab.model.ApplicationCharacteristic
 import net.akaish.kab.model.BleConnection
 import net.akaish.kab.model.TargetCharacteristic
 import net.akaish.kab.result.*
+import net.akaish.kab.utility.ILogger
 import java.util.*
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicBoolean
 
 @ExperimentalCoroutinesApi
 interface IGattFacade {
 
-    companion object {
-        /**
-         * Default value for RSSI
-         */
-        const val RSSI_UNKNOWN = -0xFFF
+    /**
+     * When true, no exceptions would be raised, all errors would be returned as results
+     */
+    val disableExceptions : AtomicBoolean
 
-        /**
-         * Min possible MTU
-         */
-        const val MTU_MIN = 23
+    /**
+     * Logger instance, when null - no logging
+     */
+    val l: ILogger?
 
-        /**
-         * Max possible MTU
-         */
-        const val MTU_MAX = 517
-
-        /**
-         * DEFAULT MTU
-         */
-        const val MTU_DEFAULT = MTU_MIN
-
-        val CLIENT_CHARACTERISTIC_CONFIG_UUID: UUID = UUID.fromString("00002902-0000-1000-8000-00805f9b34fb")
-    }
+    val applicationServices: List<ApplicationCharacteristic>
 
     /**
      * [android.bluetooth.BluetoothGattCallback] implementation ready to work with facade
@@ -156,7 +147,7 @@ interface IGattFacade {
      * @param bytes bytes to write
      * @param timeout timeout for operation
      * @param timeUnit time unit for timeout parameter
-     * @return read operation result [net.akaish.kab.result.ReadResult]
+     * @return write operation result [net.akaish.kab.result.WriteResult]
      */
     suspend fun write(target: Long, bytes: ByteArray, timeout: Long, timeUnit: TimeUnit) : WriteResult
 
@@ -166,7 +157,7 @@ interface IGattFacade {
      * @param bytes bytes to write
      * @param timeout timeout for operation
      * @param timeUnit time unit for timeout parameter
-     * @return read operation result [net.akaish.kab.result.ReadResult]
+     * @return write operation result [net.akaish.kab.result.WriteResult]
      */
     suspend fun write(target: TargetCharacteristic, bytes: ByteArray, timeout: Long, timeUnit: TimeUnit) : WriteResult
 }

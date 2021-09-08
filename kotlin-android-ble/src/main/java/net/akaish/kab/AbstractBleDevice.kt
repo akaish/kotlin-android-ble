@@ -31,8 +31,13 @@ import android.bluetooth.BluetoothProfile.GATT
 import android.content.Context
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.collect
+import net.akaish.kab.BleConstants.Companion.MIN_RSSI_UPDATE_PERIOD
+import net.akaish.kab.BleConstants.Companion.MTU_TIMEOUT
+import net.akaish.kab.BleConstants.Companion.READ_TIMEOUT
+import net.akaish.kab.BleConstants.Companion.RSSI_TIMEOUT
+import net.akaish.kab.BleConstants.Companion.SUBSCRIPTION_TIMEOUT
+import net.akaish.kab.BleConstants.Companion.WRITE_TIMEOUT
 import net.akaish.kab.model.BleConnectionState
-import net.akaish.kab.model.ApplicationCharacteristic
 import net.akaish.kab.model.ServiceType
 import net.akaish.kab.model.TargetCharacteristic
 import net.akaish.kab.result.MTUResult
@@ -42,17 +47,18 @@ import net.akaish.kab.result.SubscriptionResult
 import net.akaish.kab.result.WriteResult
 import net.akaish.kab.utility.BleLogger
 import net.akaish.kab.utility.ILogger
-import java.util.*
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.coroutines.CoroutineContext
 
 @ExperimentalCoroutinesApi
 abstract class AbstractBleDevice(context: Context,
-                                 private val rssiUpdatePeriod: Long? = null,
-                                 private val desiredMTU: Int? = null,
-                                 private val autoSubscription: Boolean = true,
-                                 protected val l: ILogger? = BleLogger("Ble")) : IBleDevice {
+                                 override val disableExceptions: AtomicBoolean,
+                                 override val rssiUpdatePeriod: Long? = null,
+                                 override val desiredMTU: Int? = null,
+                                 override val autoSubscription: Boolean = true,
+                                 override val l: ILogger? = BleLogger("Ble"),
+                                 override val onBleDeviceDisconnected: OnBleDeviceDisconnected? = null) : IBleScopedDevice {
 
     private var gatt: BluetoothGatt? = null
     private val androidBleManager by lazy { context.getSystemService(Context.BLUETOOTH_SERVICE) as BluetoothManager }
@@ -63,6 +69,8 @@ abstract class AbstractBleDevice(context: Context,
      */
     private lateinit var facadeImpl: IGattFacade
 
+    private val connectionRequested = AtomicBoolean(false)
+
     //----------------------------------------------------------------------------------------------
     // Abstract methods
     //----------------------------------------------------------------------------------------------
@@ -72,6 +80,10 @@ abstract class AbstractBleDevice(context: Context,
      */
     protected abstract suspend fun onReady()
 
+    //----------------------------------------------------------------------------------------------
+    // IBleDevice partial implementation
+    //----------------------------------------------------------------------------------------------
+    // Connection routine
     @Synchronized override fun connect(device: BluetoothDevice, context: Context) {
         check(!connectionRequested.get()) { "Duplicate connection request!" }
         check(!isConnected()) { "Already connected" }
@@ -80,8 +92,11 @@ abstract class AbstractBleDevice(context: Context,
         scope = CoroutineScope(job)
         scope.launch(coroutineContext) {
             try {
-                facadeImpl = GattFacadeImpl(device = device,
-                    l = l, applicationServices = applicationCharacteristics)
+                facadeImpl = GattFacadeImpl(
+                    device = device,
+                    l = l,
+                    applicationServices = applicationCharacteristics,
+                    disableExceptions = disableExceptions)
                 gatt = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.M) {
                     device.connectGatt(context, false, facadeImpl.bluetoothGattCallback, TRANSPORT_LE)
                 } else {
@@ -91,10 +106,7 @@ abstract class AbstractBleDevice(context: Context,
                     if (it.bleConnectionState is BleConnectionState.Disconnected) {
                         gatt?.close()
                         withContext(NonCancellable) {
-                            onDeviceDisconnected?.let { action ->
-                                action.onDeviceDisconnected(this@AbstractBleDevice)
-                                onDeviceDisconnected = null
-                            }
+                            onBleDeviceDisconnected?.onDeviceDisconnected(this@AbstractBleDevice)
                         }
                         job.cancel()
                         return@collect
@@ -154,51 +166,7 @@ abstract class AbstractBleDevice(context: Context,
         }
     }
 
-    //----------------------------------------------------------------------------------------------
-    // IBleDevice partial implementation
-    //----------------------------------------------------------------------------------------------
-
-
-    companion object {
-        const val BATTERY_ID = 0x1001L
-        val BATTERY_SERVICE = UUID.fromString("0000180f-0000-1000-8000-00805f9b34fb")
-        val BATTERY_CHARACTERISTIC = UUID.fromString("00002a19-0000-1000-8000-00805f9b34fb")
-        val APPLICATION_BATTERY_SERVICE = ApplicationCharacteristic(
-                BATTERY_SERVICE,
-                BATTERY_CHARACTERISTIC,
-                mutableListOf(ServiceType.Read),
-                BATTERY_ID
-        )
-
-        const val MIN_RSSI_UPDATE_PERIOD = 500L
-
-        const val SUBSCRIPTION_TIMEOUT = 1000L
-        const val MTU_TIMEOUT = 1000L
-        const val RSSI_TIMEOUT = 1000L
-        const val WRITE_TIMEOUT = 1000L
-        const val READ_TIMEOUT = 1000L
-    }
-
-    private val job = SupervisorJob()
-    protected val coroutineContext: CoroutineContext
-        get() = job + Dispatchers.IO
-    protected lateinit var scope: CoroutineScope
-
-    protected fun callbackReady() = this::facadeImpl.isInitialized
-
-    interface OnDeviceDisconnected {
-        fun onDeviceDisconnected(instance: AbstractBleDevice)
-    }
-
-    private var onDeviceDisconnected: OnDeviceDisconnected? = null
-
-    fun setOnDeviceDisconnectedCallback(onDeviceDisconnected: OnDeviceDisconnected?) {
-        this.onDeviceDisconnected = onDeviceDisconnected
-    }
-
-    private val connectionRequested = AtomicBoolean(false)
-
-    @Synchronized fun disconnect() {
+    @Synchronized override fun disconnect() {
         gatt?.disconnect() ?: run {
             l?.w("No device connected but disconnect request received [gatt.disconnect()]")
         }
@@ -207,7 +175,7 @@ abstract class AbstractBleDevice(context: Context,
         }
     }
 
-    @Synchronized fun release() {
+    @Synchronized override fun release() {
         job.cancel()
         gatt?.disconnect()
         gatt?.close()
@@ -224,43 +192,50 @@ abstract class AbstractBleDevice(context: Context,
             return false
         }
     }
-
-    //----------------------------------------------------------------------------------------------
     // Device communication
-    //----------------------------------------------------------------------------------------------
-    suspend fun write(target: Long, bytes: ByteArray, timeoutMS: Long?) =
-            facadeImpl.write(target, bytes, timeoutMS ?: WRITE_TIMEOUT, TimeUnit.MILLISECONDS)
+    override fun notificationChannel() = facadeImpl.notificationChannel
 
-    suspend fun write(target: TargetCharacteristic, bytes: ByteArray, timeoutMS: Long?) =
+    override suspend fun write(target: Long, bytes: ByteArray, timeoutMS: Long?) =
         facadeImpl.write(target, bytes, timeoutMS ?: WRITE_TIMEOUT, TimeUnit.MILLISECONDS)
 
-    fun writeBlocking(target: Long, bytes: ByteArray, timeoutMS: Long?) : WriteResult {
+    override suspend fun write(target: TargetCharacteristic, bytes: ByteArray, timeoutMS: Long?) =
+        facadeImpl.write(target, bytes, timeoutMS ?: WRITE_TIMEOUT, TimeUnit.MILLISECONDS)
+
+    override fun writeBlocking(target: Long, bytes: ByteArray, timeoutMS: Long?) : WriteResult {
         return runBlocking(coroutineContext) {
             return@runBlocking facadeImpl.write(target, bytes, timeoutMS ?: WRITE_TIMEOUT, TimeUnit.MILLISECONDS)
         }
     }
 
-    fun writeBlocking(target: TargetCharacteristic, bytes: ByteArray, timeoutMS: Long?) : WriteResult {
+    override fun writeBlocking(target: TargetCharacteristic, bytes: ByteArray, timeoutMS: Long?) : WriteResult {
         return runBlocking(coroutineContext) {
             return@runBlocking facadeImpl.write(target, bytes, timeoutMS ?: WRITE_TIMEOUT, TimeUnit.MILLISECONDS)
         }
     }
 
-    suspend fun read(target: Long, timeoutMS: Long?) = facadeImpl.read(target, timeoutMS ?: READ_TIMEOUT, TimeUnit.MILLISECONDS)
+    override suspend fun read(target: Long, timeoutMS: Long?) = facadeImpl.read(target, timeoutMS ?: READ_TIMEOUT, TimeUnit.MILLISECONDS)
 
-    suspend fun read(target: TargetCharacteristic, timeoutMS: Long?) = facadeImpl.read(target, timeoutMS ?: READ_TIMEOUT, TimeUnit.MILLISECONDS)
+    override suspend fun read(target: TargetCharacteristic, timeoutMS: Long?) = facadeImpl.read(target, timeoutMS ?: READ_TIMEOUT, TimeUnit.MILLISECONDS)
 
-    fun readBlocking(target: Long, timeoutMS: Long?) : ReadResult {
+    override fun readBlocking(target: Long, timeoutMS: Long?) : ReadResult {
         return runBlocking(coroutineContext) {
             return@runBlocking facadeImpl.read(target, timeoutMS ?: READ_TIMEOUT, TimeUnit.MILLISECONDS)
         }
     }
 
-    fun readBlocking(target: TargetCharacteristic, timeoutMS: Long?) : ReadResult {
+    override fun readBlocking(target: TargetCharacteristic, timeoutMS: Long?) : ReadResult {
         return runBlocking(coroutineContext) {
             return@runBlocking facadeImpl.read(target, timeoutMS ?: READ_TIMEOUT, TimeUnit.MILLISECONDS)
         }
     }
 
-    fun notificationChannel() = facadeImpl.notificationChannel
+    //----------------------------------------------------------------------------------------------
+    // Scoped device implementation
+    //----------------------------------------------------------------------------------------------
+    private val job = SupervisorJob()
+    override val coroutineContext: CoroutineContext
+        get() = job + Dispatchers.IO
+    override lateinit var scope: CoroutineScope
+
+    override fun deviceReady() = this::facadeImpl.isInitialized
 }

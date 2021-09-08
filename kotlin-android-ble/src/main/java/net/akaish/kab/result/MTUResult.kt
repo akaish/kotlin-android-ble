@@ -23,17 +23,20 @@
  */
 package net.akaish.kab.result
 
+import net.akaish.kab.throwable.*
 import net.akaish.kab.utility.GattStatusToString
 
 /**
  * MTU result: sealed class used as result for [net.akaish.kab.GattFacadeImpl.requestMTU] method
  */
-sealed class MTUResult {
+sealed class MTUResult : BLEResult {
 
     /**
      * Device running other gatt operation
      */
     object DeviceIsBusy : MTUResult() {
+        override fun toThrowable(): BleException? = BleDeviceIsBusyException(toString(), this)
+
         override fun toString() : String = "MTUResult: Device is busy: other gatt operation in progress!"
     }
 
@@ -47,6 +50,8 @@ sealed class MTUResult {
         @Suppress("Unused")
         val origin: Throwable) : MTUResult() {
 
+            override fun toThrowable(): BleException? = BleOperationException(toString(), this)
+
             override fun toString() : String = "MTUResult: exception caught while executing: ${origin.localizedMessage}!"
     }
 
@@ -59,6 +64,8 @@ sealed class MTUResult {
          */
         @Suppress("Unused")
         val timeoutMs: Long) : MTUResult() {
+
+        override fun toThrowable(): BleException? = BleTimeoutException(toString(), this)
 
         override fun toString() : String = "MTUResult: timeout ($timeoutMs ms)!"
     }
@@ -83,6 +90,8 @@ sealed class MTUResult {
         @Suppress("Unused")
         val status: Int) : MTUResult() {
 
+        override fun toThrowable(): BleException? = BleErrorException(toString(), this)
+
         override fun toString() : String = "MTUResult: GATT error ${
             GattStatusToString.gattStatusToHumanReadableString(
                 status
@@ -100,6 +109,9 @@ sealed class MTUResult {
          */
         @Suppress("Unused")
         val mtu: Int) : MTUResult() {
+
+        override fun toThrowable() : BleException? = null
+
         override fun toString() : String = "MTUResult: Success, new MTU is set to $mtu!"
     }
 }

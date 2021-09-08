@@ -23,17 +23,20 @@
  */
 package net.akaish.kab.result
 
+import net.akaish.kab.throwable.*
 import net.akaish.kab.utility.GattStatusToString
 
 /**
  * Subscription result: sealed class used as result for [net.akaish.kab.GattFacadeImpl.subscribe] method
  */
-sealed class SubscriptionResult {
+sealed class SubscriptionResult : BLEResult {
 
     /**
      * Device running other gatt operation
      */
     object DeviceIsBusy : SubscriptionResult() {
+        override fun toThrowable(): BleException? = BleDeviceIsBusyException(toString(), this)
+
         override fun toString() : String = "SubscriptionResult: Device is busy: other gatt operation in progress!"
     }
 
@@ -47,6 +50,8 @@ sealed class SubscriptionResult {
         @Suppress("Unused")
         val origin: Throwable) : SubscriptionResult() {
 
+        override fun toThrowable(): BleException? = BleOperationException(toString(), this)
+
         override fun toString() : String = "SubscriptionResult: exception caught while executing: ${origin.localizedMessage}!"
     }
 
@@ -59,6 +64,8 @@ sealed class SubscriptionResult {
          */
         @Suppress("Unused")
         val timeoutMs: Long) : SubscriptionResult() {
+
+        override fun toThrowable(): BleException? = BleTimeoutException(toString(), this)
 
         override fun toString() : String = "SubscriptionResult: timeout ($timeoutMs ms)!"
     }
@@ -83,6 +90,8 @@ sealed class SubscriptionResult {
         @Suppress("Unused")
         val status: Int) : SubscriptionResult() {
 
+        override fun toThrowable(): BleException? = BleErrorException(toString(), this)
+
         override fun toString() : String = "SubscriptionResult: GATT error ${
             GattStatusToString.gattStatusToHumanReadableString(
                 status
@@ -94,6 +103,8 @@ sealed class SubscriptionResult {
      * Characteristic subscription success result
      */
     object SubscriptionSuccess : SubscriptionResult() {
+
+        override fun toThrowable(): BleException? = null
 
         override fun toString() : String = "SubscriptionResult: Success"
     }

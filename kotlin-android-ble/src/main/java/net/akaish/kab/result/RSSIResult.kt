@@ -23,15 +23,22 @@
  */
 package net.akaish.kab.result
 
+import net.akaish.kab.throwable.*
+import net.akaish.kab.utility.GattStatusToString
+
 /**
  * RSSI request result: sealed class used as result for [net.akaish.kab.GattFacadeImpl.readRemoteRSSI] method
  */
-sealed class RSSIResult {
+sealed class RSSIResult : BLEResult {
 
     /**
      * Device running other gatt operation
      */
-    object DeviceIsBusy : RSSIResult()
+    object DeviceIsBusy : RSSIResult() {
+        override fun toThrowable(): BleException? = BleDeviceIsBusyException(toString(), this)
+
+        override fun toString() : String = "RSSIResult: Device is busy: other gatt operation in progress!"
+    }
 
     /**
      * Wrapper for exception thrown during [net.akaish.kab.GattFacadeImpl.readRemoteRSSI]
@@ -41,7 +48,12 @@ sealed class RSSIResult {
          * Original throwable
          */
         @Suppress("Unused")
-        val origin: Throwable) : RSSIResult()
+        val origin: Throwable) : RSSIResult() {
+
+        override fun toThrowable(): BleException? = BleOperationException(toString(), this)
+
+        override fun toString() : String = "RSSIResult: exception caught while executing: ${origin.localizedMessage}!"
+    }
 
     /**
      * Operation timeout during running [net.akaish.kab.GattFacadeImpl.readRemoteRSSI]
@@ -51,7 +63,12 @@ sealed class RSSIResult {
          * Timeout value in ms
          */
         @Suppress("Unused")
-        val timeoutMs: Long) : RSSIResult()
+        val timeoutMs: Long) : RSSIResult() {
+
+        override fun toThrowable(): BleException? = BleTimeoutException(toString(), this)
+
+        override fun toString() : String = "RSSIResult: timeout ($timeoutMs ms)!"
+    }
 
     /**
      * RSSI request error during running [net.akaish.kab.GattFacadeImpl.readRemoteRSSI]
@@ -71,7 +88,16 @@ sealed class RSSIResult {
          * [android.bluetooth.BluetoothGatt.GATT_FAILURE]
          */
         @Suppress("Unused")
-        val status: Int) : RSSIResult()
+        val status: Int) : RSSIResult() {
+
+        override fun toThrowable(): BleException? = BleErrorException(toString(), this)
+
+        override fun toString() : String = "RSSIResult: GATT error ${
+            GattStatusToString.gattStatusToHumanReadableString(
+                status
+            )
+        } [$status DEC 0x${status.toString(16)} HEX]!"
+    }
 
     /**
      * RSSI success result
@@ -81,5 +107,10 @@ sealed class RSSIResult {
          * Remote device RSSI value
          */
         @Suppress("Unused")
-        val rssi: Int) : RSSIResult()
+        val rssi: Int) : RSSIResult() {
+
+        override fun toThrowable(): BleException? = null
+
+        override fun toString() : String = "RSSIResult: Success, RSSI is $rssi!"
+    }
 }

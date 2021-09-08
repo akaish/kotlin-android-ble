@@ -23,15 +23,23 @@
  */
 package net.akaish.kab.result
 
+import net.akaish.kab.throwable.*
+import net.akaish.kab.utility.GattStatusToString
+import net.akaish.kab.utility.Hex
+
 /**
  * Gatt characteristic read result: [net.akaish.kab.GattFacadeImpl.read] method
  */
-sealed class ReadResult {
+sealed class ReadResult : BLEResult {
 
     /**
      * Device running other gatt operation
      */
-    object DeviceIsBusy : ReadResult()
+    object DeviceIsBusy : ReadResult() {
+        override fun toThrowable(): BleException? = BleDeviceIsBusyException(toString(), this)
+
+        override fun toString() : String = "ReadResult: Device is busy: other gatt operation in progress!"
+    }
 
     /**
      * Wrapper for exception thrown during [net.akaish.kab.GattFacadeImpl.read]
@@ -41,7 +49,12 @@ sealed class ReadResult {
          * Original throwable
          */
         @Suppress("Unused")
-        val origin: Throwable) : ReadResult()
+        val origin: Throwable) : ReadResult() {
+
+        override fun toThrowable(): BleException? = BleOperationException(toString(), this)
+
+        override fun toString() : String = "ReadResult: exception caught while executing: ${origin.localizedMessage}!"
+    }
 
     /**
      * Operation timeout during running [net.akaish.kab.GattFacadeImpl.read]
@@ -51,7 +64,12 @@ sealed class ReadResult {
          * Timeout value in ms
          */
         @Suppress("Unused")
-        val timeoutMs: Long) : ReadResult()
+        val timeoutMs: Long) : ReadResult() {
+
+        override fun toThrowable(): BleException? = BleTimeoutException(toString(), this)
+
+        override fun toString() : String = "ReadResult: timeout ($timeoutMs ms)!"
+    }
 
     /**
      * Read error while executing [net.akaish.kab.GattFacadeImpl.read]
@@ -71,8 +89,26 @@ sealed class ReadResult {
          * [android.bluetooth.BluetoothGatt.GATT_FAILURE]
          */
         @Suppress("Unused")
-        val status: Int) : ReadResult()
+        val status: Int) : ReadResult() {
 
+        override fun toThrowable(): BleException? = BleErrorException(toString(), this)
+
+        override fun toString() : String = "ReadResult: GATT error ${
+            GattStatusToString.gattStatusToHumanReadableString(
+                status
+            )
+        } [$status DEC 0x${status.toString(16)} HEX]!"
+    }
+
+    /**
+     * Internal error
+     */
+    object WrongCharacteristicCallback : ReadResult() {
+
+        override fun toThrowable(): BleException? = BleInternalErrorException(toString(), this)
+
+        override fun toString() = "ReadResult: WrongCharacteristicCallback internal error"
+    }
 
     /**
      * Characteristic read success
@@ -82,10 +118,10 @@ sealed class ReadResult {
          * Bytes read from characteristic
          */
         @Suppress("Unused")
-        val bytes: ByteArray) : ReadResult()
+        val bytes: ByteArray) : ReadResult() {
 
-    /**
-     * Internal error
-     */
-    object WrongCharacteristicCallback : ReadResult()
+        override fun toThrowable() : BleException? = null
+
+        override fun toString() = "ReadResult: ${Hex.toPrettyHexString(bytes)}"
+    }
 }

@@ -25,7 +25,7 @@ package net.akaish.kab.utility
 
 import java.util.*
 
-class StringSplitIterable(value: String, separator: Char, emptyPartsEnabled: Boolean = false) : Iterable<String> {
+internal class StringSplitIterable(value: String, separator: Char, emptyPartsEnabled: Boolean = false) : Iterable<String> {
 
     private val collection = LinkedList<String>()
 
