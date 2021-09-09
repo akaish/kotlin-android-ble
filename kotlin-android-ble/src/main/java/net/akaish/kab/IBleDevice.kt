@@ -99,6 +99,11 @@ interface IBleDevice {
     // Communication with device
     //----------------------------------------------------------------------------------------------
     /**
+     * @return gatt facade if ready or throws not initialized exception
+     */
+    fun gattFacade() : IGattFacade
+
+    /**
      * Write something to target characteristic (suspend write)
      * @param target id for characteristic from registered application characteristics
      * @param bytes bytes to write

@@ -229,6 +229,7 @@ abstract class AbstractBleDevice(context: Context,
         }
     }
 
+    override fun gattFacade(): IGattFacade = facadeImpl
     //----------------------------------------------------------------------------------------------
     // Scoped device implementation
     //----------------------------------------------------------------------------------------------
