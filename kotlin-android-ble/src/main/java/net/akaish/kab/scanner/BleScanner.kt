@@ -27,6 +27,7 @@ import android.bluetooth.BluetoothAdapter
 import android.bluetooth.BluetoothDevice
 import android.bluetooth.le.*
 import android.os.Build
+import androidx.annotation.IntRange
 import androidx.annotation.RequiresApi
 import kotlinx.coroutines.*
 import kotlinx.coroutines.channels.BroadcastChannel
@@ -35,6 +36,9 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.conflate
 import kotlinx.coroutines.flow.receiveAsFlow
+import net.akaish.kab.scanner.IBleScanner.Companion.DEVICE_AUTO_REMOVE_PERIOD_MS
+import net.akaish.kab.scanner.IBleScanner.Companion.DEVICE_FORGET_TIMEOUT_MS
+import net.akaish.kab.scanner.IBleScanner.Companion.defaultPrefix
 import net.akaish.kab.utility.BleAddressUtil.generateDeviceId
 import net.akaish.kab.utility.ILogger
 import java.util.*
@@ -43,34 +47,28 @@ import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.concurrent.Semaphore
 import java.util.concurrent.TimeUnit
 import kotlin.collections.ArrayList
+import kotlin.collections.HashMap
 import kotlin.coroutines.CoroutineContext
 
 @ExperimentalCoroutinesApi
-class BleScanner(private val deviceForgetTimeoutMs: Long? = null,
-                 private val deviceAutoRemovePeriodMs: Long? = null,
-                 private val devicePrefixMap: Map<String, ByteArray>? = null,
-                 private val l: ILogger? = null,
-                 private val emissionBackPressure: Long = TimeUnit.SECONDS.toMillis(1)) {
+@Suppress("Unused")
+class BleScanner(
+    @IntRange(from = 0, to = Long.MAX_VALUE)
+    override val deviceForgetTimeoutMs: Long = DEVICE_FORGET_TIMEOUT_MS,
+    @IntRange(from = 0, to = Long.MAX_VALUE)
+    override val deviceAutoRemovePeriodMs: Long = DEVICE_AUTO_REMOVE_PERIOD_MS,
+    override val devicePrefixMap: Map<String, ByteArray> = HashMap(),
+    override val l: ILogger? = null,
+    @IntRange(from = Byte.MIN_VALUE.toLong(), to = Byte.MAX_VALUE.toLong())
+    override val emissionBackPressure: Long = TimeUnit.SECONDS.toMillis(1)) : IBleScanner {
 
     init {
-        deviceForgetTimeoutMs?.let {
-            require(it > 0) { "Device forget timeout can not be negative" }
-        }
-        deviceAutoRemovePeriodMs?.let {
-            require(it > 0) { "Device auto remove period can not be negative" }
-        }
-        devicePrefixMap?.let {
-            it.entries.forEach { entry ->
-                require(entry.value.size == 2) { "Prefix for ${entry.key} must be 2 bytes, but provided prefix has ${entry.value.size} bytes length!" }
-            }
+        devicePrefixMap.entries.forEach { entry ->
+            require(entry.value.size == 2) { "Prefix for ${entry.key} must be 2 bytes, but provided prefix has ${entry.value.size} bytes length!" }
         }
     }
 
     companion object {
-
-        const val DEVICE_FORGET_TIMEOUT_MS = 8_000L
-        const val DEVICE_AUTO_REMOVE_PERIOD_MS = 2_000L
-        private val defaultPrefix = byteArrayOf(0x00, 0x00)
 
         fun toLeFilters(filters: List<BleScanFilter>) : List<ScanFilter> = ArrayList<ScanFilter>().apply {
             filters.forEach {
@@ -80,17 +78,46 @@ class BleScanner(private val deviceForgetTimeoutMs: Long? = null,
     }
 
     //----------------------------------------------------------------------------------------------
+    // IBleScanner implementation
+    //----------------------------------------------------------------------------------------------
+    override fun resetIgnoredAddresses() = ignoredDevices.clear()
+
+    override fun addIgnoredAddress(address: String) : Boolean {
+        ignoredDevices.add(address)
+        val out = results.removeAll { ignoredDevices.contains(it.address) }
+        emitResults()
+        return out
+    }
+
+    override fun addIgnoredAddresses(addresses: List<String>) : Boolean {
+        ignoredDevices.addAll(addresses)
+        val out = results.removeAll { ignoredDevices.contains(it.address) }
+        emitResults()
+        return out
+    }
+
+    override val scanResultsChannel = BroadcastChannel<ScanResult>(1)
+
+    override val rawScanResultChannel = BroadcastChannel<FoundBleDevice>(1)
+
+    override val isScanning = MutableStateFlow(false)
+
+    override fun setScanResultListener(scanResultListener: OnScanResult) = apply {
+        this.onScanResultListener = scanResultListener
+    }
+
+    override fun setRawScanResultListener(rawScanResultListener: OnRawScanResult) = apply {
+        this.onRawScanResultListener = rawScanResultListener
+    }
+
+    //----------------------------------------------------------------------------------------------
     // Callbacks
     //----------------------------------------------------------------------------------------------
     private var minRssiToEmit = -127
 
-    private fun generateId(name: String, address: String)  = if(devicePrefixMap != null) {
-        generateDeviceId(devicePrefixMap[name] ?: defaultPrefix, address)
-    } else {
-        generateDeviceId(defaultPrefix, address)
-    }
+    private fun generateId(name: String, address: String) = generateDeviceId(devicePrefixMap[name] ?: defaultPrefix, address)
 
-    inner class CompatScanCallback(private val scanFilters: List<BleScanFilter>) : BluetoothAdapter.LeScanCallback{
+    internal inner class CompatScanCallback(private val scanFilters: List<BleScanFilter>) : BluetoothAdapter.LeScanCallback{
         override fun onLeScan(device: BluetoothDevice?, rssi: Int, scanRecord: ByteArray?) {
             device?.let { bleDevice ->
                 scanFilters.forEach { filter ->
@@ -104,7 +131,7 @@ class BleScanner(private val deviceForgetTimeoutMs: Long? = null,
                                         rssi = rssi,
                                         timestamp = System.currentTimeMillis()
                                 )
-                                deviceChannel.offer(foundItem)
+                                rawScanResultChannel.offer(foundItem)
                                 onRawScanResultListener?.onRawScanResult(foundItem)
                             }
                         }
@@ -117,7 +144,7 @@ class BleScanner(private val deviceForgetTimeoutMs: Long? = null,
     }
 
     @RequiresApi(Build.VERSION_CODES.LOLLIPOP)
-    inner class LEScanCallback : ScanCallback() {
+    internal inner class LEScanCallback : ScanCallback() {
 
         init {
             l?.i("LEScanCallback created")
@@ -134,7 +161,7 @@ class BleScanner(private val deviceForgetTimeoutMs: Long? = null,
                                 rssi = scanResult.rssi,
                                 timestamp = System.currentTimeMillis()
                         )
-                        deviceChannel.offer(foundItem)
+                        rawScanResultChannel.offer(foundItem)
                         onRawScanResultListener?.onRawScanResult(foundItem)
                     } else Unit
                 } catch (tr: Throwable) {
@@ -155,7 +182,7 @@ class BleScanner(private val deviceForgetTimeoutMs: Long? = null,
                                     rssi = scanResult.rssi,
                                     timestamp = System.currentTimeMillis()
                             )
-                            deviceChannel.offer(foundItem)
+                            rawScanResultChannel.offer(foundItem)
                             onRawScanResultListener?.onRawScanResult(foundItem)
                         }
                     } catch (tr: Throwable) {
@@ -178,29 +205,8 @@ class BleScanner(private val deviceForgetTimeoutMs: Long? = null,
     private val results = ConcurrentLinkedQueue<FoundBleDevice>()
     private val ignoredDevices = Collections.newSetFromMap(ConcurrentHashMap<String, Boolean>())
 
-    interface OnScanResult {
-        fun onScanResult(scanResult: ScanResult)
-    }
-
-    interface OnRawScanResult {
-        fun onRawScanResult(bleDevice: FoundBleDevice)
-    }
-
     @Volatile private var onScanResultListener: OnScanResult? = null
     @Volatile private var onRawScanResultListener: OnRawScanResult? = null
-
-    fun setScanResultListener(scanResultListener: OnScanResult) = apply {
-        this.onScanResultListener = scanResultListener
-    }
-
-    fun setRawScanResultListener(rawScanResultListener: OnRawScanResult) = apply {
-        this.onRawScanResultListener = rawScanResultListener
-    }
-
-    @Suppress("Unused")
-    val scanResultsChannel = BroadcastChannel<ScanResult>(1)
-    @Suppress("Unused")
-    val isRunning = MutableStateFlow(false)
 
     private fun emitResults() {
         val result =
@@ -211,23 +217,13 @@ class BleScanner(private val deviceForgetTimeoutMs: Long? = null,
 
     private fun removeTimedOutItems() {
         results.removeAll { existingItem ->
-            existingItem.timestamp + (deviceForgetTimeoutMs ?: DEVICE_FORGET_TIMEOUT_MS) < System.currentTimeMillis()
+            existingItem.timestamp + deviceForgetTimeoutMs < System.currentTimeMillis()
                     || ignoredDevices.contains(existingItem.address)
         }
         emitResults()
     }
 
-    fun resetIgnoredAddress() = ignoredDevices.clear()
-
-    fun addIgnoredAddress(address: String) : Boolean {
-        ignoredDevices.add(address)
-        val out = results.removeAll { ignoredDevices.contains(it.address) }
-        emitResults()
-        return out
-    }
-
     private lateinit var job: Job
-
     private lateinit var coroutineContext: CoroutineContext
     private lateinit var receiveBleDeviceChannel: ReceiveChannel<FoundBleDevice>
 
@@ -238,17 +234,17 @@ class BleScanner(private val deviceForgetTimeoutMs: Long? = null,
             val scope = CoroutineScope(coroutineContext)
             scope.launch(coroutineContext) {
                 while (true) {
-                    delay(deviceAutoRemovePeriodMs ?: DEVICE_AUTO_REMOVE_PERIOD_MS)
+                    delay(deviceAutoRemovePeriodMs)
                     removeTimedOutItems()
                 }
             }
             scope.launch(coroutineContext) {
                 if(this@BleScanner::receiveBleDeviceChannel.isInitialized)
                     receiveBleDeviceChannel.cancel()
-                receiveBleDeviceChannel = deviceChannel.openSubscription()
+                receiveBleDeviceChannel = rawScanResultChannel.openSubscription()
                 receiveBleDeviceChannel.receiveAsFlow().conflate().collect { newItem ->
                     results.removeAll { existingItem ->
-                        existingItem.timestamp + (deviceForgetTimeoutMs ?: DEVICE_FORGET_TIMEOUT_MS) < System.currentTimeMillis()
+                        existingItem.timestamp + deviceForgetTimeoutMs < System.currentTimeMillis()
                                 || (newItem.address == existingItem.address && newItem.name == existingItem.name)
                                 || ignoredDevices.contains(newItem.address)
                     }
@@ -258,28 +254,27 @@ class BleScanner(private val deviceForgetTimeoutMs: Long? = null,
                     delay(emissionBackPressure)
                 }
             }
-            isRunning.value = true
+            isScanning.value = true
         } catch (tr: Throwable) {
             stopResultsEmission()
         }
     }
 
     private fun stopResultsEmission() {
-        isRunning.value = false
+        isScanning.value = false
         if(this::job.isInitialized)
             job.cancel()
     }
 
     //----------------------------------------------------------------------------------------------
-    // Implementation
+    // Start\Stop scan implementation
     //----------------------------------------------------------------------------------------------
-    val deviceChannel = BroadcastChannel<FoundBleDevice>(1)
     private val mutex = Semaphore(1)
     private val adapter: BluetoothAdapter = BluetoothAdapter.getDefaultAdapter()
     private var compatCallback: CompatScanCallback? = null
     private var leCallback: LEScanCallback? = null
 
-    fun startScan(scanFilters: List<BleScanFilter>, scanSettings: ScanSettings? = null, minRssiToEmit: Int = -127) : Boolean {
+    override fun startScan(scanFilters: List<BleScanFilter>, scanSettings: ScanSettings?, minRssiToEmit: Int) : Boolean {
         this.minRssiToEmit = minRssiToEmit
         try {
             mutex.acquire()
@@ -336,7 +331,7 @@ class BleScanner(private val deviceForgetTimeoutMs: Long? = null,
         }
     }
 
-    fun stopScan() : Boolean {
+    override fun stopScan() : Boolean {
         try {
             mutex.acquire()
             if (Build.VERSION.SDK_INT < Build.VERSION_CODES.LOLLIPOP) {
