@@ -30,7 +30,7 @@ interface BLEResult {
 
     fun throwException(exceptionsDisabled: Boolean) {
         toThrowable()?.let {
-            if(exceptionsDisabled)
+            if(!exceptionsDisabled)
                 throw it
         }
     }

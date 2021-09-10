@@ -327,7 +327,7 @@ class GattFacadeImpl(device: BluetoothDevice,
     //----------------------------------------------------------------------------------------------
     // MTU
     //----------------------------------------------------------------------------------------------
-    private fun interface OnMTUChanged {
+    private interface OnMTUChanged {
         fun onMTUChanged(gatt: BluetoothGatt, mtu: Int, status: Int)
     }
 
@@ -338,15 +338,17 @@ class GattFacadeImpl(device: BluetoothDevice,
             : MTUResult = suspendCancellableCoroutine { continuation ->
         try {
             require(desiredMTU in MTU_MIN..MTU_MAX)
-            mtuCallback = OnMTUChanged { _, mtu, status ->
-                mtuCallback = null
-                if (status == GATT_SUCCESS) {
-                    GattCallback@this.mtu.value = mtu
-                    l?.i("${deviceTag()} MTU callback invoked (value $mtu)")
-                    continuation.resume(MTUResult.MTUSuccess(mtu))
-                } else {
-                    l?.e("${deviceTag()} MTU ERROR : STATUS CODE $status")
-                    continuation.resume(MTUResult.MTUError(status))
+            mtuCallback = object : OnMTUChanged {
+                override fun onMTUChanged(gatt: BluetoothGatt, mtu1: Int, status: Int) {
+                    mtuCallback = null
+                    if (status == GATT_SUCCESS) {
+                        mtu.value = mtu1
+                        l?.i("${deviceTag()} MTU callback invoked (value $mtu1)")
+                        continuation.resume(MTUResult.MTUSuccess(mtu1))
+                    } else {
+                        l?.e("${deviceTag()} MTU ERROR : STATUS CODE $status")
+                        continuation.resume(MTUResult.MTUError(status))
+                    }
                 }
             }
             if(!gatt.requestMtu(desiredMTU)) {
@@ -534,7 +536,7 @@ class GattFacadeImpl(device: BluetoothDevice,
                         STATE_CONNECTED -> {
                             deviceState.value = previous.copy(bleConnectionState = BleConnectionState.Connected)
                             l?.d("${deviceTag()} connected, waiting some time before starting services discovery")
-                            Thread.sleep(600)
+                            Thread.sleep(600L)
                             l?.i("${deviceTag()} discovering services...")
                             gatt.discoverServices()
                         }

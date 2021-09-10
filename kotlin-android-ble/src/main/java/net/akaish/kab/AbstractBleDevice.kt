@@ -170,9 +170,6 @@ abstract class AbstractBleDevice(context: Context,
         gatt?.disconnect() ?: run {
             l?.w("No device connected but disconnect request received [gatt.disconnect()]")
         }
-        gatt?.close() ?: run {
-            l?.w("No device connected but disconnect request received [gatt.close()]")
-        }
     }
 
     @Synchronized override fun release() {
