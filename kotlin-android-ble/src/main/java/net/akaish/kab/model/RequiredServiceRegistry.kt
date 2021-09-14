@@ -26,7 +26,7 @@ package net.akaish.kab.model
 import java.util.*
 import kotlin.collections.HashMap
 
-class RequiredServiceRegistry {
+internal class RequiredServiceRegistry {
 
     data class Characteristic(
         val uuid: UUID,

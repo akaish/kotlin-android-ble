@@ -28,4 +28,10 @@ import java.util.*
 data class ApplicationCharacteristic(val service: UUID,
                                      val characteristic: UUID,
                                      val serviceTypes: MutableList<ServiceType>,
-                                     val id: Long)
+                                     val id: Long) {
+
+    fun asTarget() = TargetCharacteristic(
+        serviceUUID = service,
+        characteristicUUID = characteristic
+    )
+}
