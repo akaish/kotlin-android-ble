@@ -23,6 +23,8 @@
  */
 package net.akaish.kab.utility
 
+import java.util.*
+
 @Suppress("Unused")
 object Hex {
     private val hexArray = "0123456789ABCDEF".toCharArray()
@@ -35,7 +37,7 @@ object Hex {
      * @param bytes bytes to be converted to string
      * @return string representation of byte array
      */
-    fun toPrettyHexString(bytes: ByteArray?): String {
+    @JvmStatic fun toPrettyHexString(bytes: ByteArray?): String {
         return if (bytes == null) "" else toPrettyHexString(bytes, BYTE_DELIMITER)
     }
 
@@ -45,7 +47,7 @@ object Hex {
      * @param bytes bytes to be converted to string
      * @return string representation of byte array
      */
-    fun toHexString(bytes: ByteArray?): String {
+    @JvmStatic fun toHexString(bytes: ByteArray?): String {
         return if (bytes == null) "" else toPrettyHexString(bytes, null)
     }
 
@@ -57,7 +59,7 @@ object Hex {
      * @return string representation of byte array
      */
     @Suppress("Unused")
-    fun toPrettyHexString(bytes: ByteArray?, delimiter: Char?): String {
+    @JvmStatic fun toPrettyHexString(bytes: ByteArray?, delimiter: Char?): String {
         if (bytes == null) return ""
         val hexChars = CharArray(bytes.size * 2)
         for (j in bytes.indices) {
@@ -77,13 +79,31 @@ object Hex {
     }
 
     /**
+     * Removes all characters from provided string that are not one of 0123456789ABCDEF
+     * @param source source string
+     * @return hex digit only string
+     */
+    @JvmStatic fun removeAllExceptHexDigits(source: String?): String {
+        if (source == null) return ""
+        val out = StringBuilder()
+        for (ch in source.toCharArray()) {
+            val chUpper = Character.toUpperCase(ch)
+            if (Arrays.binarySearch(hexArray, chUpper) >= 0) {
+                out.append(chUpper)
+            }
+        }
+        return out.toString()
+    }
+
+    /**
      * Converts provided String 0123...CEF to byte array
      * if % 2 != 0 than 0 would be added at the end of provided string
      *
-     * @param str string to be converted
+     * @param strIn string to be converted
      * @return byte representation of 0123...CEF string
      */
-    fun hexStringToByteArray(str: String): ByteArray? {
+    @JvmStatic fun hexStringToByteArray(strIn: String): ByteArray? {
+        val str = removeAllExceptHexDigits(strIn)
         if (str.length % 2 != 0) {
             val sb = StringBuilder()
             sb.append(str.substring(0, str.length - 1))
