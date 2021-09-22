@@ -33,18 +33,20 @@ import android.util.Log
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.collect
+import net.akaish.kab.model.BleRequirementsState
 import kotlin.coroutines.CoroutineContext
 
+@Suppress("Unused")
 @ExperimentalCoroutinesApi
 class BleRequirements(private val context: Context) {
 
-    data class State(val bleOn: Boolean, val locOn: Boolean)
-
     @Suppress("Unused")
-    lateinit var locationServicesEnabled: MutableStateFlow<Boolean>
+    lateinit var locationServicesEnabled: MutableStateFlow<BleRequirementsState.LocationState>
     @Suppress("Unused")
     lateinit var bluetoothEnabled: MutableStateFlow<Int>
-    val unmetRequirements = MutableStateFlow(State(bleOn = false, locOn = false))
+    @Suppress("Unused")
+    val unmetRequirements = MutableStateFlow(BleRequirementsState(bleOn = false,
+        BleRequirementsState.LocationState(gpsOn = false, gsmOn = false)))
 
     private val bluetoothStateReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
@@ -63,6 +65,7 @@ class BleRequirements(private val context: Context) {
     private val coroutineContext: CoroutineContext
         get() = job + Dispatchers.IO
 
+    @Suppress("Unused")
     fun startWatching() {
         job = SupervisorJob()
         locationServicesEnabled = MutableStateFlow(isLocationServicesEnabled(context))
@@ -72,7 +75,7 @@ class BleRequirements(private val context: Context) {
             launch {
                 locationServicesEnabled.collect {
                     val reqSet = unmetRequirements.value
-                    unmetRequirements.value = reqSet.copy(locOn = it)
+                    unmetRequirements.value = reqSet.copy(locationState = it)
                 }
             }
             launch {
@@ -89,13 +92,14 @@ class BleRequirements(private val context: Context) {
         context.registerReceiver(bluetoothStateReceiver, IntentFilter(ACTION_STATE_CHANGED))
     }
 
+    @Suppress("Unused")
     fun terminate() {
         context.unregisterReceiver(bluetoothStateReceiver)
         if(this::job.isInitialized)
             job.cancel()
     }
 
-    private fun isLocationServicesEnabled(context: Context): Boolean {
+    private fun isLocationServicesEnabled(context: Context): BleRequirementsState.LocationState {
         val locationManager = context.getSystemService(Context.LOCATION_SERVICE) as LocationManager
         val gpsEnabled = try {
             locationManager.isProviderEnabled(LocationManager.GPS_PROVIDER)
@@ -109,6 +113,6 @@ class BleRequirements(private val context: Context) {
             false.also { Log.d("BleRequirements", "BleRequirements#isLocationServicesEnabled exception", ex) }
         }
 
-        return gpsEnabled || networkEnabled
+        return BleRequirementsState.LocationState(gpsEnabled, networkEnabled)
     }
 }
