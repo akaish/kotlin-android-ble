@@ -111,6 +111,14 @@ abstract class AbstractBleDevice(context: Context,
                         job.cancel()
                         return@collect
                     }
+                    if (it.bleConnectionState is BleConnectionState.ConnectionStateError) {
+                        gatt?.close()
+                        withContext(NonCancellable) {
+                            onBleDeviceDisconnected?.onDeviceDisconnected(this@AbstractBleDevice)
+                        }
+                        job.cancel()
+                        return@collect
+                    }
                     if (it.bleConnectionState is BleConnectionState.ServicesSupported) {
                         //------------------------------------------------------------------------------
                         // Subscribing what should be subscribed

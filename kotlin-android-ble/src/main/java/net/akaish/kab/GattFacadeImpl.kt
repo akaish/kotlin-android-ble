@@ -233,7 +233,6 @@ class GattFacadeImpl(device: BluetoothDevice,
                 override fun onReadRemoteRssi(gatt: BluetoothGatt, rssi: Int, status: Int) {
                     onReadRSSICallback = null
                     if (status == GATT_SUCCESS) {
-                        l?.i("${deviceTag()} RSSI callback invoked (value ${this@GattFacadeImpl.rssi})")
                         this@GattFacadeImpl.rssi.value = rssi
                         continuation.resume(RSSIResult.RSSISuccess(rssi))
                     } else {

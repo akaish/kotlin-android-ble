@@ -31,11 +31,10 @@ import androidx.annotation.IntRange
 import androidx.annotation.RequiresApi
 import kotlinx.coroutines.*
 import kotlinx.coroutines.channels.BroadcastChannel
+import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.channels.ReceiveChannel
-import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.flow.collect
-import kotlinx.coroutines.flow.conflate
-import kotlinx.coroutines.flow.receiveAsFlow
 import net.akaish.kab.scanner.IBleScanner.Companion.DEVICE_AUTO_REMOVE_PERIOD_MS
 import net.akaish.kab.scanner.IBleScanner.Companion.DEVICE_FORGET_TIMEOUT_MS
 import net.akaish.kab.scanner.IBleScanner.Companion.defaultPrefix
@@ -80,9 +79,13 @@ class BleScanner(
     //----------------------------------------------------------------------------------------------
     // IBleScanner implementation
     //----------------------------------------------------------------------------------------------
-    override fun resetIgnoredAddresses() = ignoredDevices.clear()
+    override fun resetIgnoredAddresses() {
+        ignoredDevices.clear()
+    }
 
     override fun addIgnoredAddress(address: String) : Boolean {
+        if(ignoredDevices.contains(address))
+            return false
         ignoredDevices.add(address)
         val out = results.removeAll { ignoredDevices.contains(it.address) }
         emitResults()
@@ -90,7 +93,15 @@ class BleScanner(
     }
 
     override fun addIgnoredAddresses(addresses: List<String>) : Boolean {
-        ignoredDevices.addAll(addresses)
+        var updateRequired = false
+        addresses.forEach {
+            if(!ignoredDevices.contains(it)) {
+                ignoredDevices.add(it)
+                updateRequired = true
+            }
+        }
+        if(!updateRequired)
+            return false
         val out = results.removeAll { ignoredDevices.contains(it.address) }
         emitResults()
         return out
@@ -242,14 +253,17 @@ class BleScanner(
                 if(this@BleScanner::receiveBleDeviceChannel.isInitialized)
                     receiveBleDeviceChannel.cancel()
                 receiveBleDeviceChannel = rawScanResultChannel.openSubscription()
-                receiveBleDeviceChannel.receiveAsFlow().conflate().collect { newItem ->
+                receiveBleDeviceChannel.receiveAsFlow().onEach { newItem ->
+                    results.removeAll { existingItem ->
+                        (newItem.address == existingItem.address && newItem.name == existingItem.name)
+                    }
+                    results.add(newItem)
                     results.removeAll { existingItem ->
                         existingItem.timestamp + deviceForgetTimeoutMs < System.currentTimeMillis()
-                                || (newItem.address == existingItem.address && newItem.name == existingItem.name)
                                 || ignoredDevices.contains(newItem.address)
                     }
-                    l?.d("Found device: ${newItem.name} @ ${newItem.address}")
-                    results.add(newItem)
+                    l?.i("Found device: ${newItem.name} @ ${newItem.address}")
+                }.buffer(1, BufferOverflow.DROP_OLDEST).collect {
                     emitResults()
                     delay(emissionBackPressure)
                 }
