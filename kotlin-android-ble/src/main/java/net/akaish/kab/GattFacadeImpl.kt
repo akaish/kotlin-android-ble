@@ -30,6 +30,7 @@ import androidx.annotation.IntRange
 import androidx.annotation.RequiresApi
 import kotlinx.coroutines.*
 import kotlinx.coroutines.channels.BroadcastChannel
+import kotlinx.coroutines.channels.sendBlocking
 import kotlinx.coroutines.flow.MutableStateFlow
 import net.akaish.kab.BleConstants.Companion.CLIENT_CHARACTERISTIC_CONFIG_UUID
 import net.akaish.kab.BleConstants.Companion.MTU_DEFAULT
@@ -605,7 +606,7 @@ class GattFacadeImpl(device: BluetoothDevice,
         override fun onCharacteristicChanged(gatt: BluetoothGatt, characteristic: BluetoothGattCharacteristic) {
             val value = if(characteristic.value == null) byteArrayOf() else characteristic.value
             l?.d("${deviceTag()} received notification from ${characteristic.uuid} : [${value.size}] ${Hex.toPrettyHexString(value)}")
-            notificationChannel.offer(Pair(characteristic, value))
+            notificationChannel.sendBlocking(Pair(characteristic, value))
         }
 
         override fun onMtuChanged(gatt: BluetoothGatt, mtu: Int, status: Int) {
