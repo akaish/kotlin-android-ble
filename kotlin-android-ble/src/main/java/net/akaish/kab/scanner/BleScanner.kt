@@ -35,6 +35,9 @@ import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.channels.ReceiveChannel
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.flow.collect
+import net.akaish.kab.model.FoundBleDevice
+import net.akaish.kab.model.ScanResult
+import net.akaish.kab.model.ScannerState
 import net.akaish.kab.scanner.IBleScanner.Companion.DEVICE_AUTO_REMOVE_PERIOD_MS
 import net.akaish.kab.scanner.IBleScanner.Companion.DEVICE_FORGET_TIMEOUT_MS
 import net.akaish.kab.scanner.IBleScanner.Companion.defaultPrefix
@@ -111,7 +114,7 @@ class BleScanner(
 
     override val rawScanResultChannel = BroadcastChannel<FoundBleDevice>(1)
 
-    override val isScanning = MutableStateFlow(false)
+    override val isScanning = MutableStateFlow<ScannerState>(ScannerState.Idle)
 
     override fun setScanResultListener(scanResultListener: OnScanResult) = apply {
         this.onScanResultListener = scanResultListener
@@ -205,8 +208,9 @@ class BleScanner(
 
         override fun onScanFailed(errorCode: Int) {
             l?.e("Failed to start scanning: error code is $errorCode!")
-            if(errorCode != 0)
-                throw IllegalStateException("LeScanner failed with code $errorCode!")
+            if(errorCode != 0) {
+                isScanning.value = ScannerState.ScannerError(errorCode)
+            }
         }
     }
 
@@ -268,14 +272,14 @@ class BleScanner(
                     delay(emissionBackPressure)
                 }
             }
-            isScanning.value = true
+            isScanning.value = ScannerState.Scanning
         } catch (tr: Throwable) {
             stopResultsEmission()
         }
     }
 
     private fun stopResultsEmission() {
-        isScanning.value = false
+        isScanning.value = ScannerState.Idle
         if(this::job.isInitialized)
             job.cancel()
     }

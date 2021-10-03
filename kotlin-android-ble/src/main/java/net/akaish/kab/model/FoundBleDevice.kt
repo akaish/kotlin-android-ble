@@ -21,7 +21,10 @@
  *
  * ---
  */
-package net.akaish.kab.scanner
+package net.akaish.kab.model
 
-data class ScanResult(val timestamp: Long,
-                      val foundBleDevices: List<FoundBleDevice>)
+data class FoundBleDevice(val id: Long,
+                          val name: String,
+                          val address: String,
+                          val rssi: Int,
+                          val timestamp: Long)

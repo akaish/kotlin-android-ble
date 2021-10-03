@@ -23,6 +23,8 @@
  */
 package net.akaish.kab.scanner
 
+import net.akaish.kab.model.FoundBleDevice
+
 interface OnRawScanResult {
     fun onRawScanResult(bleDevice: FoundBleDevice)
 }

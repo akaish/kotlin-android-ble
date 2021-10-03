@@ -28,6 +28,9 @@ import androidx.annotation.IntRange
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.channels.BroadcastChannel
 import kotlinx.coroutines.flow.StateFlow
+import net.akaish.kab.model.FoundBleDevice
+import net.akaish.kab.model.ScanResult
+import net.akaish.kab.model.ScannerState
 import net.akaish.kab.utility.ILogger
 
 @ExperimentalCoroutinesApi
@@ -75,7 +78,7 @@ interface IBleScanner {
     /**
      * State flow that emits scanner state
      */
-    val isScanning : StateFlow<Boolean>
+    val isScanning : StateFlow<ScannerState>
 
     /**
      * Sets callback for receiving scan results in callback way

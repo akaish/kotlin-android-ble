@@ -23,6 +23,8 @@
  */
 package net.akaish.kab.scanner
 
+import net.akaish.kab.model.ScanResult
+
 interface OnScanResult {
     fun onScanResult(scanResult: ScanResult)
 }
