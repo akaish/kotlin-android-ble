@@ -12,8 +12,8 @@ android {
     defaultConfig {
         minSdkVersion 18
         targetSdkVersion 30
-        versionCode 9
-        versionName "0.8.8"
+        versionCode 10
+        versionName "0.8.9"
 
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         consumerProguardFiles "consumer-rules.pro"
@@ -50,7 +50,7 @@ dependencies {
 
 group = "net.akaish.kab"
 archivesBaseName = "ikey-kab"
-version = "0.8.8"
+version = "0.8.9"
 
 task deleteJar(type: Delete) {
     delete 'libs/jars/'+archivesBaseName+'.'+version+'.jar'

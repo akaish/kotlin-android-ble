@@ -85,10 +85,9 @@ abstract class AbstractBleDevice(context: Context,
     //----------------------------------------------------------------------------------------------
     // Connection routine
     @Synchronized override fun connect(device: BluetoothDevice, context: Context) {
-        check(!connectionRequested.get()) { "Duplicate connection request!" }
+        check(connectionRequested.compareAndSet(false, true)) { "Duplicate connection request!" }
         check(!isConnected()) { "Already connected" }
-        connectionRequested.set(true)
-        l?.d("Connection request (${device.name} @ ${device.address})")
+        l?.d("Connection request (${device.name} @ ${device.address}) [$this]")
         scope = CoroutineScope(job)
         scope.launch(coroutineContext) {
             try {
@@ -181,9 +180,9 @@ abstract class AbstractBleDevice(context: Context,
     }
 
     @Synchronized override fun release() {
-        job.cancel()
         gatt?.disconnect()
         gatt?.close()
+        job.cancel()
     }
 
     @Synchronized override fun isConnected() : Boolean {
