@@ -524,7 +524,7 @@ class GattFacadeImpl(device: BluetoothDevice,
                         STATE_DISCONNECTED -> {
                             l?.i("${deviceTag()} disconnected.")
                             gatt.close()
-                            Thread.sleep(600L)
+                            Thread.sleep(400L)
                             l?.e("Disconnection, closing gatt...")
                             rssi.value = RSSI_UNKNOWN
                             deviceState.value = previous.copy(bleConnectionState = BleConnectionState.Disconnected)
@@ -536,7 +536,7 @@ class GattFacadeImpl(device: BluetoothDevice,
                         STATE_CONNECTED -> {
                             deviceState.value = previous.copy(bleConnectionState = BleConnectionState.Connected)
                             l?.d("${deviceTag()} connected, waiting some time before starting services discovery")
-                            Thread.sleep(600L)
+                            Thread.sleep(400L)
                             l?.i("${deviceTag()} discovering services...")
                             gatt.discoverServices()
                         }
