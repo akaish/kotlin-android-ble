@@ -24,7 +24,7 @@
 package net.akaish.kab.model
 
 data class FoundBleDevice(val id: Long,
-                          val name: String,
+                          val name: String?,
                           val address: String,
                           val rssi: Int,
                           val timestamp: Long)

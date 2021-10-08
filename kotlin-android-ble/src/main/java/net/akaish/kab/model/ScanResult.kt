@@ -23,7 +23,5 @@
  */
 package net.akaish.kab.model
 
-import net.akaish.kab.model.FoundBleDevice
-
 data class ScanResult(val timestamp: Long,
                       val foundBleDevices: List<FoundBleDevice>)

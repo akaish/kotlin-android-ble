@@ -30,6 +30,7 @@ data class ApplicationCharacteristic(val service: UUID,
                                      val serviceTypes: MutableList<ServiceType>,
                                      val id: Long) {
 
+    @Suppress("Unused")
     fun asTarget() = TargetCharacteristic(
         serviceUUID = service,
         characteristicUUID = characteristic

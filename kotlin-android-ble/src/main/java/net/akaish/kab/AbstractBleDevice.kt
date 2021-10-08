@@ -103,16 +103,18 @@ abstract class AbstractBleDevice(context: Context,
                 }
                 facadeImpl.deviceState.collect {
                     if (it.bleConnectionState is BleConnectionState.Disconnected) {
-                        gatt?.close()
                         withContext(NonCancellable) {
+                            gatt?.close()
+                            delay(200)
                             onBleDeviceDisconnected?.onDeviceDisconnected(this@AbstractBleDevice)
                         }
                         job.cancel()
                         return@collect
                     }
                     if (it.bleConnectionState is BleConnectionState.ConnectionStateError) {
-                        gatt?.close()
                         withContext(NonCancellable) {
+                            gatt?.close()
+                            delay(200)
                             onBleDeviceDisconnected?.onDeviceDisconnected(this@AbstractBleDevice)
                         }
                         job.cancel()

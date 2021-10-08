@@ -27,6 +27,7 @@ import android.bluetooth.BluetoothAdapter
 import android.bluetooth.BluetoothDevice
 import android.bluetooth.le.*
 import android.os.Build
+import android.util.Log
 import androidx.annotation.IntRange
 import androidx.annotation.RequiresApi
 import kotlinx.coroutines.*
@@ -129,7 +130,14 @@ class BleScanner(
     //----------------------------------------------------------------------------------------------
     private var minRssiToEmit = -127
 
-    private fun generateId(name: String, address: String) = generateDeviceId(devicePrefixMap[name] ?: defaultPrefix, address)
+    private fun generateId(name: String?, address: String) : Long {
+        val prefix = if(name == null) {
+            defaultPrefix
+        } else {
+            devicePrefixMap[name] ?: defaultPrefix
+        }
+        return generateDeviceId(prefix, address)
+    }
 
     internal inner class CompatScanCallback(private val scanFilters: List<BleScanFilter>) : BluetoothAdapter.LeScanCallback{
         override fun onLeScan(device: BluetoothDevice?, rssi: Int, scanRecord: ByteArray?) {
@@ -280,6 +288,7 @@ class BleScanner(
 
     private fun stopResultsEmission() {
         isScanning.value = ScannerState.Idle
+        Log.e("sss", "!!!! ${isScanning.value}")
         if(this::job.isInitialized)
             job.cancel()
     }
@@ -288,6 +297,9 @@ class BleScanner(
     // Start\Stop scan implementation
     //----------------------------------------------------------------------------------------------
     private val mutex = Semaphore(1)
+    // TODO try instead of default adapter use getSystemService
+    // TODO something like         BluetoothManager bluetoothManager = (BluetoothManager) context.getSystemService(Context.BLUETOOTH_SERVICE);
+    // TODO                        mBluetoothAdapter = bluetoothManager.getAdapter();
     private val adapter: BluetoothAdapter = BluetoothAdapter.getDefaultAdapter()
     private var compatCallback: CompatScanCallback? = null
     private var leCallback: LEScanCallback? = null
@@ -328,7 +340,6 @@ class BleScanner(
 
     private fun stopScannerNotSynchronized() {
         try {
-            mutex.acquire()
             if (Build.VERSION.SDK_INT < Build.VERSION_CODES.LOLLIPOP) {
                 compatCallback?.let {
                     @Suppress("Deprecation")

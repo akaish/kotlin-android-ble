@@ -26,6 +26,7 @@ package net.akaish.kab.model
 data class BleRequirementsState(val bleOn: Boolean,
                                 val locationState: LocationState) {
 
+    @Suppress("Unused")
     fun requirementsAreMet() = bleOn && locationState.requirementsAreMet()
 
 

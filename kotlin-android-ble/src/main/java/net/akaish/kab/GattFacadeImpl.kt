@@ -524,7 +524,7 @@ class GattFacadeImpl(device: BluetoothDevice,
                         STATE_DISCONNECTED -> {
                             l?.i("${deviceTag()} disconnected.")
                             gatt.close()
-                            Thread.sleep(400L)
+                            Thread.sleep(600)
                             l?.e("Disconnection, closing gatt...")
                             rssi.value = RSSI_UNKNOWN
                             deviceState.value = previous.copy(bleConnectionState = BleConnectionState.Disconnected)
