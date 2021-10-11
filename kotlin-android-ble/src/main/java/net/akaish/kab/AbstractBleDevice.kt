@@ -24,11 +24,10 @@
 package net.akaish.kab
 
 import android.bluetooth.BluetoothDevice
-import android.bluetooth.BluetoothDevice.TRANSPORT_LE
-import android.bluetooth.BluetoothGatt
 import android.bluetooth.BluetoothManager
 import android.bluetooth.BluetoothProfile.GATT
 import android.content.Context
+import android.util.Log
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.collect
 import net.akaish.kab.BleConstants.Companion.MIN_RSSI_UPDATE_PERIOD
@@ -52,16 +51,12 @@ import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.coroutines.CoroutineContext
 
 @ExperimentalCoroutinesApi
-abstract class AbstractBleDevice(context: Context,
-                                 override val disableExceptions: AtomicBoolean,
+abstract class AbstractBleDevice(override val disableExceptions: AtomicBoolean,
                                  override val rssiUpdatePeriod: Long? = null,
                                  override val desiredMTU: Int? = null,
                                  override val autoSubscription: Boolean = true,
                                  override val l: ILogger? = BleLogger("Ble"),
                                  override val onBleDeviceDisconnected: OnBleDeviceDisconnected? = null) : IBleScopedDevice {
-
-    private var gatt: BluetoothGatt? = null
-    private val androidBleManager by lazy { context.getSystemService(Context.BLUETOOTH_SERVICE) as BluetoothManager }
 
     /**
      * Instance of GattCallback instance where all magic of flattening callbacks into raw coroutine
@@ -84,9 +79,11 @@ abstract class AbstractBleDevice(context: Context,
     // IBleDevice partial implementation
     //----------------------------------------------------------------------------------------------
     // Connection routine
-    @Synchronized override fun connect(device: BluetoothDevice, context: Context) {
+    @Synchronized override fun connect(device: BluetoothDevice, context: Context, transport: Int?) {
+        // TODO #575 thread check
+        Log.e("ThreadCheck", "connect : ${Thread.currentThread().name}")
         check(connectionRequested.compareAndSet(false, true)) { "Duplicate connection request!" }
-        check(!isConnected()) { "Already connected" }
+        check(!isConnected(context)) { "Already connected" }
         l?.d("Connection request (${device.name} @ ${device.address}) [$this]")
         scope = CoroutineScope(job)
         scope.launch(coroutineContext) {
@@ -96,28 +93,24 @@ abstract class AbstractBleDevice(context: Context,
                     l = l,
                     applicationServices = applicationCharacteristics,
                     disableExceptions = disableExceptions)
-                gatt = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.M) {
-                    device.connectGatt(context, false, facadeImpl.bluetoothGattCallback, TRANSPORT_LE)
-                } else {
-                    device.connectGatt(context, false, facadeImpl.bluetoothGattCallback) // TRANSPORT_AUTO =\
-                }
+                facadeImpl.connect(context, false, transport ?: 2) // public static final int TRANSPORT_AUTO = 0; TODO #575
                 facadeImpl.deviceState.collect {
                     if (it.bleConnectionState is BleConnectionState.Disconnected) {
                         withContext(NonCancellable) {
-                            gatt?.close()
+                            facadeImpl.close()
                             delay(200)
                             onBleDeviceDisconnected?.onDeviceDisconnected(this@AbstractBleDevice)
+                            job.cancel()
                         }
-                        job.cancel()
                         return@collect
                     }
                     if (it.bleConnectionState is BleConnectionState.ConnectionStateError) {
                         withContext(NonCancellable) {
-                            gatt?.close()
+                            facadeImpl.close()
                             delay(200)
                             onBleDeviceDisconnected?.onDeviceDisconnected(this@AbstractBleDevice)
+                            job.cancel()
                         }
-                        job.cancel()
                         return@collect
                     }
                     if (it.bleConnectionState is BleConnectionState.ServicesSupported) {
@@ -175,26 +168,31 @@ abstract class AbstractBleDevice(context: Context,
         }
     }
 
-    @Synchronized override fun disconnect() {
-        gatt?.disconnect() ?: run {
-            l?.w("No device connected but disconnect request received [gatt.disconnect()]")
-        }
-    }
+    @Synchronized override fun disconnect() = facadeImpl.disconnect()
 
     @Synchronized override fun release() {
-        gatt?.disconnect()
-        gatt?.close()
+        facadeImpl.disconnect()
+        facadeImpl.close()
         job.cancel()
     }
 
-    @Synchronized override fun isConnected() : Boolean {
-        gatt?.let { gatt ->
-            androidBleManager.getConnectedDevices(GATT).forEach {
-                if(it.address == gatt.device.address)
-                    return true
+    @Synchronized override fun isConnected(context: Context) : Boolean {
+        if (this::facadeImpl.isInitialized) {
+            facadeImpl.getGatt()?.let { gatt ->
+                val androidBleManager = context.getSystemService(Context.BLUETOOTH_SERVICE) as BluetoothManager
+                var connected = false
+                Log.e("===", "Connected device listing ${System.currentTimeMillis()} :")
+                androidBleManager.getConnectedDevices(GATT).forEach {
+                    Log.e("===", "Connected device: ${it.name} -> ${it.address}")
+                    if (it.address == gatt.device.address)
+                        connected = true
+                }
+                Log.e("===", "Connected device listening end")
+                return connected
+            } ?: run {
+                return false
             }
-            return false
-        } ?: run {
+        } else {
             return false
         }
     }

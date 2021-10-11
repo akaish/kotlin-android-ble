@@ -25,7 +25,12 @@ package net.akaish.kab
 
 import android.bluetooth.*
 import android.bluetooth.BluetoothGatt.*
+import android.content.Context
 import android.os.Build
+import android.os.Handler
+import android.os.HandlerThread
+import android.os.Looper
+import android.util.Log
 import androidx.annotation.IntRange
 import androidx.annotation.RequiresApi
 import kotlinx.coroutines.*
@@ -39,19 +44,108 @@ import net.akaish.kab.BleConstants.Companion.MTU_MIN
 import net.akaish.kab.BleConstants.Companion.RSSI_UNKNOWN
 import net.akaish.kab.model.*
 import net.akaish.kab.result.*
+import net.akaish.kab.utility.ConnectDisconnectCounter
+import net.akaish.kab.utility.GattCode
 import net.akaish.kab.utility.Hex
 import net.akaish.kab.utility.ILogger
+import java.util.*
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.logging.Logger
 import kotlin.collections.HashMap
 import kotlin.coroutines.resume
 
 @ExperimentalCoroutinesApi
-class GattFacadeImpl(device: BluetoothDevice,
+class GattFacadeImpl(override val device: BluetoothDevice,
                      override val disableExceptions: AtomicBoolean,
                      override val l: ILogger? = null,
-                     override val applicationServices: MutableList<ApplicationCharacteristic> = mutableListOf()) : IGattFacade {
+                     override val applicationServices: MutableList<ApplicationCharacteristic> = mutableListOf(),
+                     private val uuid: UUID = UUID.randomUUID()) : IGattFacade {
+
+    private lateinit var gatt: BluetoothGatt
+    private val mainThreadHandler = Handler(Looper.getMainLooper())
+
+    override fun equals(other: Any?): Boolean {
+        if(other == null) return false
+        if(other !is GattFacadeImpl) return false
+        return uuid == other.uuid
+    }
+
+    override fun hashCode(): Int {
+        return uuid.hashCode()
+    }
+
+    private val connectedOnce = AtomicBoolean(false)
+
+    @Synchronized  override fun connect(context: Context, autoConnection: Boolean, transport: Int) {
+        if(connectedOnce.compareAndSet(false, true)) {
+            mainThreadHandler.post {
+                // TODO #575 thread check
+                Log.e("ThreadCheck", "gat.connect : ${Thread.currentThread().name}")
+                gatt = when {
+                    Build.VERSION.SDK_INT >= Build.VERSION_CODES.O -> {
+                        // There may be some errors cause of internal android bug with threading
+                        // https://www.hellsoft.se/bluetooth-le-for-modern-android-development-part-1/
+                        // TODO #575 UGPSTracker forward PHY option
+                        device.connectGatt(
+                                context,
+                                false,
+                                this.bluetoothGattCallback,
+                                transport,
+                                BluetoothDevice.PHY_LE_1M,
+                                mainThreadHandler
+                        )
+                    }
+                    Build.VERSION.SDK_INT >= Build.VERSION_CODES.M -> {
+                        device.connectGatt(context, false, this.bluetoothGattCallback, transport)
+                    }
+                    else -> {
+                        device.connectGatt(
+                                context,
+                                false,
+                                this.bluetoothGattCallback
+                        ) // TRANSPORT_AUTO =\
+                    }
+                }
+                ConnectDisconnectCounter.connection(uuid)
+            }
+        }
+    }
+
+    private val disconnectedOnce = AtomicBoolean(false)
+
+    @Synchronized override fun disconnect() {
+        if(this::gatt.isInitialized)
+            if(disconnectedOnce.compareAndSet(false, true)) {
+                mainThreadHandler.post {
+                    // TODO #575 thread check
+                    Log.e("ThreadCheck", "gat.disconnect : ${Thread.currentThread().name}")
+                    gatt.disconnect()
+                }
+            }
+    }
+
+    private val closedOnce = AtomicBoolean(false)
+
+    @Synchronized override fun close() {
+        if(this::gatt.isInitialized) {
+            if(closedOnce.compareAndSet(false, true)) {
+                mainThreadHandler.post {
+                    // TODO #575 thread check
+                    Log.e("ThreadCheck", "gat.close : ${Thread.currentThread().name}")
+                    ConnectDisconnectCounter.close(uuid)
+                    gatt.close()
+                }
+            }
+        }
+    }
+
+    override fun getGatt(): BluetoothGatt? {
+        return if(this::gatt.isInitialized)
+            gatt
+        else null
+    }
 
     //----------------------------------------------------------------------------------------------
     // Gatt facade implementation
@@ -148,8 +242,6 @@ class GattFacadeImpl(device: BluetoothDevice,
     //----------------------------------------------------------------------------------------------
     // Internal implementation
     //----------------------------------------------------------------------------------------------
-    private lateinit var gatt: BluetoothGatt
-
     private fun deviceTag() = "${deviceState.value.deviceName} @ ${deviceState.value.deviceUid}"
 
     private val characteristics = HashMap<String, BluetoothGattCharacteristic>()
@@ -187,7 +279,7 @@ class GattFacadeImpl(device: BluetoothDevice,
             l?.e("${deviceTag()} NOT ALL SERVICES/CHARACTERISTICS SUPPORTED: REQUIRED FEATURES: ${applicationServices.size}; SUPPORTED FEATURES: $featureCount!")
             l?.e("${deviceTag()} DISCONNECTING!")
             deviceState.value = previous.copy(bleConnectionState = BleConnectionState.ServiceDiscoveryError(previous.bleConnectionState.stateId, status))
-            gatt.disconnect()
+            disconnect()
         } else {
             deviceState.value = previous.copy(bleConnectionState = BleConnectionState.ServicesSupported(previous.bleConnectionState.stateId, status))
         }
@@ -243,11 +335,12 @@ class GattFacadeImpl(device: BluetoothDevice,
                 }
 
             }
-            if(!gatt.readRemoteRssi()) {
-                onReadRSSICallback = null
-                l?.e("${deviceTag()} FAILED TO READ RSSI: DEVICE IS BUSY")
-                continuation.resume(RSSIResult.DeviceIsBusy)
-                return@suspendCancellableCoroutine
+            mainThreadHandler.post {
+                if(!gatt.readRemoteRssi()) {
+                    onReadRSSICallback = null
+                    l?.e("${deviceTag()} FAILED TO READ RSSI: DEVICE IS BUSY")
+                    continuation.resume(RSSIResult.DeviceIsBusy)
+                }
             }
         } catch (tr: Throwable) {
             onReadRSSICallback = null
@@ -284,10 +377,11 @@ class GattFacadeImpl(device: BluetoothDevice,
 
     private suspend fun subscribe(characteristic: BluetoothGattCharacteristic, timeoutMs: Long)
             : SubscriptionResult = suspendCancellableCoroutine { continuation ->
-        if (!gatt.setCharacteristicNotification(characteristic, true)) {
-            l?.e("${deviceTag()} FAILED TO SET SUBSCRIPTION FLAG TO ${characteristic.uuid}!")
-            continuation.resume(SubscriptionResult.SubscriptionError(-228))
-            return@suspendCancellableCoroutine
+        mainThreadHandler.post {
+            if (!gatt.setCharacteristicNotification(characteristic, true)) {
+                l?.e("${deviceTag()} FAILED TO SET SUBSCRIPTION FLAG TO ${characteristic.uuid}!")
+                continuation.resume(SubscriptionResult.SubscriptionError(-228))
+            }
         }
         try {
             val descriptor = characteristic.getDescriptor(CLIENT_CHARACTERISTIC_CONFIG_UUID)
@@ -304,11 +398,12 @@ class GattFacadeImpl(device: BluetoothDevice,
                     }
                 }
             }
-            if (!gatt.writeDescriptor(descriptor)) {
-                subscriptionCallback = null
-                l?.e("${deviceTag()} FAILED TO SUBSCRIBE TO ${characteristic.uuid} ; DEVICE IS BUSY!")
-                continuation.resume(SubscriptionResult.DeviceIsBusy)
-                return@suspendCancellableCoroutine
+            mainThreadHandler.post {
+                if (!gatt.writeDescriptor(descriptor)) {
+                    subscriptionCallback = null
+                    l?.e("${deviceTag()} FAILED TO SUBSCRIBE TO ${characteristic.uuid} ; DEVICE IS BUSY!")
+                    continuation.resume(SubscriptionResult.DeviceIsBusy)
+                }
             }
         } catch (tr: Throwable) {
             subscriptionCallback = null
@@ -351,11 +446,12 @@ class GattFacadeImpl(device: BluetoothDevice,
                     }
                 }
             }
-            if(!gatt.requestMtu(desiredMTU)) {
-                mtuCallback = null
-                l?.e("${deviceTag()} MTU ERROR : DEVICE IS BUSY")
-                continuation.resume(MTUResult.DeviceIsBusy)
-                return@suspendCancellableCoroutine
+            mainThreadHandler.post {
+                if(!gatt.requestMtu(desiredMTU)) {
+                    mtuCallback = null
+                    l?.e("${deviceTag()} MTU ERROR : DEVICE IS BUSY")
+                    continuation.resume(MTUResult.DeviceIsBusy)
+                }
             }
         } catch (tr: Throwable) {
             if(tr is TimeoutCancellationException) {
@@ -426,11 +522,12 @@ class GattFacadeImpl(device: BluetoothDevice,
                 return@suspendCancellableCoroutine
             }
             callbacks[target] = callback
-            if(!gatt.readCharacteristic(target)) {
-                callbacks.remove(target)
-                l?.e("${deviceTag()} READ ERROR : DEVICE IS BUSY; CHAR ${target.uuid}")
-                continuation.resume(ReadResult.DeviceIsBusy)
-                return@suspendCancellableCoroutine
+            mainThreadHandler.post {
+                if(!gatt.readCharacteristic(target)) {
+                    callbacks.remove(target)
+                    l?.e("${deviceTag()} READ ERROR : DEVICE IS BUSY; CHAR ${target.uuid}")
+                    continuation.resume(ReadResult.DeviceIsBusy)
+                }
             }
         } catch (tr: Throwable) {
             callbacks.remove(target)
@@ -489,11 +586,12 @@ class GattFacadeImpl(device: BluetoothDevice,
             }
             callbacks[target] = writeCallback
             target.value = bytes
-            if(!gatt.writeCharacteristic(target)) {
-                l?.e("${deviceTag()} WRITE ERROR : DEVICE IS BUSY; CHAR ${target.uuid}")
-                callbacks.remove(target)
-                continuation.resume(WriteResult.DeviceIsBusy)
-                return@suspendCancellableCoroutine
+            mainThreadHandler.post {
+                if(!gatt.writeCharacteristic(target)) {
+                    l?.e("${deviceTag()} WRITE ERROR : DEVICE IS BUSY; CHAR ${target.uuid}")
+                    callbacks.remove(target)
+                    continuation.resume(WriteResult.DeviceIsBusy)
+                }
             }
         } catch (tr: Throwable) {
             if(tr is TimeoutCancellationException) {
@@ -513,47 +611,80 @@ class GattFacadeImpl(device: BluetoothDevice,
     //----------------------------------------------------------------------------------------------
     // Internal GattCallback class that hides all callback routine behind scene
     //----------------------------------------------------------------------------------------------
+    private val alreadyConnected = AtomicBoolean(false)
+    private val alreadyConnecting = AtomicBoolean(false)
+    private val alreadyDisconnecting = AtomicBoolean(false)
+    private val alreadyDisconnected = AtomicBoolean(false)
     private inner class GattCallbacks : BluetoothGattCallback() {
 
         override fun onConnectionStateChange(gatt: BluetoothGatt, status: Int, newState: Int) {
-            if(!this@GattFacadeImpl::gatt.isInitialized)
-                this@GattFacadeImpl.gatt = gatt
             deviceState.value.let { previous ->
+                // TODO #575 remove
+                if(status == GattCode.GATT_FAILURE) {
+                    print("=(")
+                }
                 if(status == GATT_SUCCESS) {
                     when (newState) {
                         STATE_DISCONNECTED -> {
-                            l?.i("${deviceTag()} disconnected.")
-                            gatt.close()
-                            Thread.sleep(600)
-                            l?.e("Disconnection, closing gatt...")
-                            rssi.value = RSSI_UNKNOWN
-                            deviceState.value = previous.copy(bleConnectionState = BleConnectionState.Disconnected)
+                            if(alreadyDisconnected.compareAndSet(false, true)) {
+                                l?.i("${deviceTag()} disconnected.")
+                                close()
+                                Thread.sleep(1000L)
+                                l?.e("Disconnection, closing gatt...")
+                                rssi.value = RSSI_UNKNOWN
+                                deviceState.value =
+                                    previous.copy(bleConnectionState = BleConnectionState.Disconnected)
+                            } else {
+                                l?.e("STATE_DISCONNECTED CALLED TWICE")
+                            }
                         }
                         STATE_CONNECTING -> {
-                            l?.i("${deviceTag()} connecting...")
-                            deviceState.value = previous.copy(bleConnectionState = BleConnectionState.Connecting)
+                            if(alreadyConnecting.compareAndSet(false, true)) {
+                                l?.i("${deviceTag()} connecting...")
+                                deviceState.value =
+                                    previous.copy(bleConnectionState = BleConnectionState.Connecting)
+                            } else {
+                                l?.e("STATE_CONNECTING CALLED TWICE")
+                            }
                         }
                         STATE_CONNECTED -> {
-                            deviceState.value = previous.copy(bleConnectionState = BleConnectionState.Connected)
-                            l?.d("${deviceTag()} connected, waiting some time before starting services discovery")
-                            Thread.sleep(400L)
-                            l?.i("${deviceTag()} discovering services...")
-                            gatt.discoverServices()
+                            if(alreadyConnected.compareAndSet(false, true)) {
+                                deviceState.value =
+                                    previous.copy(bleConnectionState = BleConnectionState.Connected)
+                                l?.d("${deviceTag()} connected, waiting some time before starting services discovery")
+                                Thread.sleep(600L)
+                                l?.i("${deviceTag()} discovering services...")
+                                mainThreadHandler.post {
+                                    // TODO #575 thread check
+                                    Log.e(
+                                        "ThreadCheck",
+                                        "gat.discoverServices : ${Thread.currentThread().name}"
+                                    )
+                                    gatt.discoverServices()
+                                }
+                            } else {
+                                l?.e("STATE_CONNECTED CALLED TWICE")
+                            }
                         }
                         STATE_DISCONNECTING -> {
-                            l?.i("${deviceTag()} disconnecting...")
-                            deviceState.value = previous.copy(bleConnectionState = BleConnectionState.Disconnecting)
+                            if(alreadyDisconnecting.compareAndSet(false, true)) {
+                                l?.i("${deviceTag()} disconnecting...")
+                                deviceState.value =
+                                    previous.copy(bleConnectionState = BleConnectionState.Disconnecting)
+                            } else {
+                                l?.e("STATE_DISCONNECTING CALLED TWICE")
+                            }
                         }
                         else -> {
                             l?.e("${deviceTag()} : UNKNOWN STATE: $newState")
                             deviceState.value = previous.copy(bleConnectionState = BleConnectionState.UnknownState(newState))
-                            gatt.disconnect()
+                            close()
                         }
                     }
                 } else {
                     l?.e("${deviceTag()} : CONNECTION ERROR: STATE = $newState ; STATUS CODE = $status")
                     deviceState.value = previous.copy(bleConnectionState = BleConnectionState.ConnectionStateError(newState, status))
-                    gatt.disconnect()
+                    close()
                 }
             }
         }
@@ -563,7 +694,7 @@ class GattFacadeImpl(device: BluetoothDevice,
                 if(status != GATT_SUCCESS) {
                     l?.e("${deviceTag()} : FAILED TO DISCOVER SERVICES : STATUS CODE = $status")
                     deviceState.value = previous.copy(bleConnectionState = BleConnectionState.ServiceDiscoveryError(-1, status))
-                    gatt.disconnect()
+                    close()
                     return
                 }
 

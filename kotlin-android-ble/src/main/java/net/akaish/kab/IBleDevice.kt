@@ -78,12 +78,12 @@ interface IBleDevice {
     /**
      * Connect device and prepare for application usage
      */
-    fun connect(device: BluetoothDevice, context: Context)
+    fun connect(device: BluetoothDevice, context: Context, transport: Int? = null)
 
     /**
      * @return true if device connected via bluetooth
      */
-    fun isConnected() : Boolean
+    fun isConnected(context: Context) : Boolean
 
     /**
      * Disconnects from device

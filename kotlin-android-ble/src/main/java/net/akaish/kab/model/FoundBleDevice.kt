@@ -23,8 +23,11 @@
  */
 package net.akaish.kab.model
 
+import android.bluetooth.BluetoothDevice
+
 data class FoundBleDevice(val id: Long,
                           val name: String?,
                           val address: String,
                           val rssi: Int,
-                          val timestamp: Long)
+                          val timestamp: Long,
+                          val remoteDevice: BluetoothDevice)

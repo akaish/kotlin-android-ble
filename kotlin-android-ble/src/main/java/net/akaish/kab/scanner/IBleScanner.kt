@@ -24,6 +24,7 @@
 package net.akaish.kab.scanner
 
 import android.bluetooth.le.ScanSettings
+import android.content.Context
 import androidx.annotation.IntRange
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.channels.BroadcastChannel
@@ -94,7 +95,8 @@ interface IBleScanner {
      * Starts scanner
      * @return true if scanner started
      */
-    fun startScan(scanFilters: List<BleScanFilter> = listOf(),
+    fun startScan(context: Context,
+                  scanFilters: List<BleScanFilter> = listOf(),
                   scanSettings: ScanSettings? = null,
                   @IntRange(from = Byte.MIN_VALUE.toLong(), to = Byte.MAX_VALUE.toLong())
                   minRssiToEmit: Int = -127) : Boolean

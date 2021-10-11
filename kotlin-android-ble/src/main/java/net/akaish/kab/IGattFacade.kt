@@ -23,8 +23,11 @@
  */
 package net.akaish.kab
 
+import android.bluetooth.BluetoothDevice
+import android.bluetooth.BluetoothGatt
 import android.bluetooth.BluetoothGattCallback
 import android.bluetooth.BluetoothGattCharacteristic
+import android.content.Context
 import android.os.Build
 import androidx.annotation.IntRange
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -41,6 +44,16 @@ import java.util.concurrent.atomic.AtomicBoolean
 
 @ExperimentalCoroutinesApi
 interface IGattFacade {
+
+    val device: BluetoothDevice
+
+    fun connect(context: Context, autoConnection: Boolean, transport: Int)
+
+    fun disconnect()
+
+    fun close()
+
+    fun getGatt() : BluetoothGatt?
 
     /**
      * When true, no exceptions would be raised, all errors would be returned as results

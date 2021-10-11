@@ -25,8 +25,12 @@ package net.akaish.kab.scanner
 
 import android.bluetooth.BluetoothAdapter
 import android.bluetooth.BluetoothDevice
+import android.bluetooth.BluetoothManager
 import android.bluetooth.le.*
+import android.content.Context
 import android.os.Build
+import android.os.Handler
+import android.os.Looper
 import android.util.Log
 import androidx.annotation.IntRange
 import androidx.annotation.RequiresApi
@@ -47,7 +51,6 @@ import net.akaish.kab.utility.ILogger
 import java.util.*
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.ConcurrentLinkedQueue
-import java.util.concurrent.Semaphore
 import java.util.concurrent.TimeUnit
 import kotlin.collections.ArrayList
 import kotlin.collections.HashMap
@@ -147,11 +150,12 @@ class BleScanner(
                         if (filter.filter(bleDevice)) {
                             if(rssi >= minRssiToEmit) {
                                 val foundItem = FoundBleDevice(
-                                        id = generateId(bleDevice.name, bleDevice.address),
-                                        name = bleDevice.name,
-                                        address = bleDevice.address,
-                                        rssi = rssi,
-                                        timestamp = System.currentTimeMillis()
+                                    id = generateId(bleDevice.name, bleDevice.address),
+                                    name = bleDevice.name,
+                                    address = bleDevice.address,
+                                    rssi = rssi,
+                                    timestamp = System.currentTimeMillis(),
+                                    remoteDevice = bleDevice
                                 )
                                 rawScanResultChannel.offer(foundItem)
                                 onRawScanResultListener?.onRawScanResult(foundItem)
@@ -177,11 +181,12 @@ class BleScanner(
                 try {
                     if(scanResult.rssi >= minRssiToEmit) {
                         val foundItem = FoundBleDevice(
-                                id = generateId(bleDevice.name, bleDevice.address),
-                                name = bleDevice.name,
-                                address = bleDevice.address,
-                                rssi = scanResult.rssi,
-                                timestamp = System.currentTimeMillis()
+                            id = generateId(bleDevice.name, bleDevice.address),
+                            name = bleDevice.name,
+                            address = bleDevice.address,
+                            rssi = scanResult.rssi,
+                            timestamp = System.currentTimeMillis(),
+                            remoteDevice = bleDevice
                         )
                         rawScanResultChannel.offer(foundItem)
                         onRawScanResultListener?.onRawScanResult(foundItem)
@@ -198,11 +203,12 @@ class BleScanner(
                     try {
                         if(scanResult.rssi >= minRssiToEmit) {
                             val foundItem = FoundBleDevice(
-                                    id = generateId(bleDevice.name, bleDevice.address),
-                                    name = bleDevice.name,
-                                    address = bleDevice.address,
-                                    rssi = scanResult.rssi,
-                                    timestamp = System.currentTimeMillis()
+                                id = generateId(bleDevice.name, bleDevice.address),
+                                name = bleDevice.name,
+                                address = bleDevice.address,
+                                rssi = scanResult.rssi,
+                                timestamp = System.currentTimeMillis(),
+                                remoteDevice = bleDevice
                             )
                             rawScanResultChannel.offer(foundItem)
                             onRawScanResultListener?.onRawScanResult(foundItem)
@@ -231,11 +237,32 @@ class BleScanner(
     @Volatile private var onScanResultListener: OnScanResult? = null
     @Volatile private var onRawScanResultListener: OnRawScanResult? = null
 
+    // 2021-10-10 03:26:07.466 24011-24696/ru.ikey.express E/AndroidRuntime: FATAL EXCEPTION: DefaultDispatcher-worker-10
+    //    Process: ru.ikey.express, PID: 24011
+    //    java.util.NoSuchElementException
+    //        at java.util.concurrent.ConcurrentLinkedQueue$Itr.next(ConcurrentLinkedQueue.java:733)
+    //        at kotlin.collections.CollectionsKt___CollectionsKt.toList(_Collections.kt:1313)
+    //        at net.akaish.kab.scanner.BleScanner.emitResults(BleScanner.kt:237)
+    //        at net.akaish.kab.scanner.BleScanner.access$emitResults(BleScanner.kt:59)
+    //        at net.akaish.kab.scanner.BleScanner$startResultsEmission$2$invokeSuspend$$inlined$collect$1.emit(Collect.kt:133)
+    //        at kotlinx.coroutines.flow.FlowKt__ChannelsKt.emitAllImpl$FlowKt__ChannelsKt(Channels.kt:61)
+    //        at kotlinx.coroutines.flow.FlowKt__ChannelsKt$emitAllImpl$1.invokeSuspend(Unknown Source:11)
+    //        at kotlin.coroutines.jvm.internal.BaseContinuationImpl.resumeWith(ContinuationImpl.kt:33)
+    //        at kotlinx.coroutines.DispatchedTask.run(DispatchedTask.kt:106)
+    //        at kotlinx.coroutines.scheduling.CoroutineScheduler.runSafely(CoroutineScheduler.kt:571)
+    //        at kotlinx.coroutines.scheduling.CoroutineScheduler$Worker.executeTask(CoroutineScheduler.kt:750)
+    //        at kotlinx.coroutines.scheduling.CoroutineScheduler$Worker.runWorker(CoroutineScheduler.kt:678)
+    //        at kotlinx.coroutines.scheduling.CoroutineScheduler$Worker.run(CoroutineScheduler.kt:665)
+    // TODO TODO TODO
     private fun emitResults() {
-        val result =
-            ScanResult(System.currentTimeMillis(), results.toList().sortedBy { it.rssi })
-        onScanResultListener?.onScanResult(result)
-        scanResultsChannel.offer(result)
+        try {
+            val result =
+                    ScanResult(System.currentTimeMillis(), results.toList().sortedBy { it.rssi })
+            onScanResultListener?.onScanResult(result)
+            scanResultsChannel.offer(result)
+        } catch (tr: Throwable) {
+            l?.e("emitResults()", tr)
+        }
     }
 
     private fun removeTimedOutItems() {
@@ -296,18 +323,16 @@ class BleScanner(
     //----------------------------------------------------------------------------------------------
     // Start\Stop scan implementation
     //----------------------------------------------------------------------------------------------
-    private val mutex = Semaphore(1)
-    // TODO try instead of default adapter use getSystemService
-    // TODO something like         BluetoothManager bluetoothManager = (BluetoothManager) context.getSystemService(Context.BLUETOOTH_SERVICE);
-    // TODO                        mBluetoothAdapter = bluetoothManager.getAdapter();
-    private val adapter: BluetoothAdapter = BluetoothAdapter.getDefaultAdapter()
     private var compatCallback: CompatScanCallback? = null
     private var leCallback: LEScanCallback? = null
+    private lateinit var adapter: BluetoothAdapter
 
-    override fun startScan(scanFilters: List<BleScanFilter>, scanSettings: ScanSettings?, minRssiToEmit: Int) : Boolean {
+    @Synchronized override fun startScan(context: Context, scanFilters: List<BleScanFilter>, scanSettings: ScanSettings?, minRssiToEmit: Int) : Boolean {
+        // TODO #575 thread check
+        Log.e("ThreadCheck", "startScan : ${Thread.currentThread().name}")
         this.minRssiToEmit = minRssiToEmit
         try {
-            mutex.acquire()
+            adapter = (context.getSystemService(Context.BLUETOOTH_SERVICE) as BluetoothManager).adapter
             if(Build.VERSION.SDK_INT < Build.VERSION_CODES.LOLLIPOP) {
                 CompatScanCallback(scanFilters).let {
                     compatCallback = it
@@ -317,8 +342,9 @@ class BleScanner(
             } else {
                 leCallback?.let {
                     stopResultsEmission()
+                    Log.e("assad", "----------------------------------------------------------------")
                     val scanner: BluetoothLeScanner = adapter.bluetoothLeScanner
-                    scanner.stopScan(LEScanCallback())
+                    scanner.stopScan(it)
                 }
 
                 LEScanCallback().let {
@@ -333,8 +359,6 @@ class BleScanner(
             l?.e("Failed to start LE scan", tr)
             stopScannerNotSynchronized()
             return false
-        } finally {
-            mutex.release()
         }
     }
 
@@ -347,22 +371,25 @@ class BleScanner(
                     stopResultsEmission()
                 }
                 l?.d("Scanner compat callback instance does not exist.")
+                compatCallback = null
             } else {
                 leCallback?.let {
                     stopResultsEmission()
                     val scanner: BluetoothLeScanner = adapter.bluetoothLeScanner
-                    scanner.stopScan(LEScanCallback())
+                    scanner.stopScan(it)
                 }
                 l?.d("Scanner le callback instance does not exist.")
+                leCallback = null
             }
         } catch (tr: Throwable) {
             l?.e("Exception caught while stopping le scan", tr)
         }
     }
 
-    override fun stopScan() : Boolean {
+    @Synchronized  override fun stopScan() : Boolean {
+        // TODO #575 thread check
+        Log.e("ThreadCheck", "stopScan : ${Thread.currentThread().name}")
         try {
-            mutex.acquire()
             if (Build.VERSION.SDK_INT < Build.VERSION_CODES.LOLLIPOP) {
                 compatCallback?.let {
                     stopResultsEmission()
@@ -370,18 +397,19 @@ class BleScanner(
                     adapter.stopLeScan(it)
                 }
                 l?.d("Scanner compat callback instance does not exist.")
+                compatCallback = null
             } else {
                 leCallback?.let {
                     stopResultsEmission()
                     val scanner: BluetoothLeScanner = adapter.bluetoothLeScanner
-                    scanner.stopScan(LEScanCallback())
+                    scanner.stopScan(it)
                 }
                 l?.d("Scanner le callback instance does not exist.")
+                leCallback = null
             }
         } catch (tr: Throwable) {
             l?.e("Exception caught while stopping le scan", tr)
         } finally {
-            mutex.release()
             return true
         }
     }
