@@ -27,7 +27,6 @@ import android.bluetooth.BluetoothDevice
 import android.bluetooth.BluetoothManager
 import android.bluetooth.BluetoothProfile.GATT
 import android.content.Context
-import android.util.Log
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.collect
 import net.akaish.kab.BleConstants.Companion.MIN_RSSI_UPDATE_PERIOD
@@ -79,9 +78,7 @@ abstract class AbstractBleDevice(override val disableExceptions: AtomicBoolean,
     // IBleDevice partial implementation
     //----------------------------------------------------------------------------------------------
     // Connection routine
-    @Synchronized override fun connect(device: BluetoothDevice, context: Context, transport: Int?) {
-        // TODO #575 thread check
-        Log.e("ThreadCheck", "connect : ${Thread.currentThread().name}")
+    @Synchronized override fun connect(device: BluetoothDevice, context: Context, transport: Int) {
         check(connectionRequested.compareAndSet(false, true)) { "Duplicate connection request!" }
         check(!isConnected(context)) { "Already connected" }
         l?.d("Connection request (${device.name} @ ${device.address}) [$this]")
@@ -92,8 +89,9 @@ abstract class AbstractBleDevice(override val disableExceptions: AtomicBoolean,
                     device = device,
                     l = l,
                     applicationServices = applicationCharacteristics,
-                    disableExceptions = disableExceptions)
-                facadeImpl.connect(context, false, transport ?: 2) // public static final int TRANSPORT_AUTO = 0; TODO #575
+                    disableExceptions = disableExceptions,
+                    phyLe = desiredPhyLe)
+                facadeImpl.connect(context, false, transport)
                 facadeImpl.deviceState.collect {
                     if (it.bleConnectionState is BleConnectionState.Disconnected) {
                         withContext(NonCancellable) {
@@ -181,13 +179,10 @@ abstract class AbstractBleDevice(override val disableExceptions: AtomicBoolean,
             facadeImpl.getGatt()?.let { gatt ->
                 val androidBleManager = context.getSystemService(Context.BLUETOOTH_SERVICE) as BluetoothManager
                 var connected = false
-                Log.e("===", "Connected device listing ${System.currentTimeMillis()} :")
                 androidBleManager.getConnectedDevices(GATT).forEach {
-                    Log.e("===", "Connected device: ${it.name} -> ${it.address}")
                     if (it.address == gatt.device.address)
                         connected = true
                 }
-                Log.e("===", "Connected device listening end")
                 return connected
             } ?: run {
                 return false

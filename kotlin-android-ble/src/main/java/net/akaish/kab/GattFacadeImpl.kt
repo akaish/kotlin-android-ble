@@ -28,9 +28,7 @@ import android.bluetooth.BluetoothGatt.*
 import android.content.Context
 import android.os.Build
 import android.os.Handler
-import android.os.HandlerThread
 import android.os.Looper
-import android.util.Log
 import androidx.annotation.IntRange
 import androidx.annotation.RequiresApi
 import kotlinx.coroutines.*
@@ -45,14 +43,12 @@ import net.akaish.kab.BleConstants.Companion.RSSI_UNKNOWN
 import net.akaish.kab.model.*
 import net.akaish.kab.result.*
 import net.akaish.kab.utility.ConnectDisconnectCounter
-import net.akaish.kab.utility.GattCode
 import net.akaish.kab.utility.Hex
 import net.akaish.kab.utility.ILogger
 import java.util.*
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
-import java.util.logging.Logger
 import kotlin.collections.HashMap
 import kotlin.coroutines.resume
 
@@ -61,7 +57,8 @@ class GattFacadeImpl(override val device: BluetoothDevice,
                      override val disableExceptions: AtomicBoolean,
                      override val l: ILogger? = null,
                      override val applicationServices: MutableList<ApplicationCharacteristic> = mutableListOf(),
-                     private val uuid: UUID = UUID.randomUUID()) : IGattFacade {
+                     private val uuid: UUID = UUID.randomUUID(),
+                     override val phyLe: Int = 1) : IGattFacade {
 
     private lateinit var gatt: BluetoothGatt
     private val mainThreadHandler = Handler(Looper.getMainLooper())
@@ -81,19 +78,14 @@ class GattFacadeImpl(override val device: BluetoothDevice,
     @Synchronized  override fun connect(context: Context, autoConnection: Boolean, transport: Int) {
         if(connectedOnce.compareAndSet(false, true)) {
             mainThreadHandler.post {
-                // TODO #575 thread check
-                Log.e("ThreadCheck", "gat.connect : ${Thread.currentThread().name}")
                 gatt = when {
                     Build.VERSION.SDK_INT >= Build.VERSION_CODES.O -> {
-                        // There may be some errors cause of internal android bug with threading
-                        // https://www.hellsoft.se/bluetooth-le-for-modern-android-development-part-1/
-                        // TODO #575 UGPSTracker forward PHY option
                         device.connectGatt(
                                 context,
                                 false,
                                 this.bluetoothGattCallback,
                                 transport,
-                                BluetoothDevice.PHY_LE_1M,
+                                phyLe,
                                 mainThreadHandler
                         )
                     }
@@ -119,8 +111,6 @@ class GattFacadeImpl(override val device: BluetoothDevice,
         if(this::gatt.isInitialized)
             if(disconnectedOnce.compareAndSet(false, true)) {
                 mainThreadHandler.post {
-                    // TODO #575 thread check
-                    Log.e("ThreadCheck", "gat.disconnect : ${Thread.currentThread().name}")
                     gatt.disconnect()
                 }
             }
@@ -132,8 +122,6 @@ class GattFacadeImpl(override val device: BluetoothDevice,
         if(this::gatt.isInitialized) {
             if(closedOnce.compareAndSet(false, true)) {
                 mainThreadHandler.post {
-                    // TODO #575 thread check
-                    Log.e("ThreadCheck", "gat.close : ${Thread.currentThread().name}")
                     ConnectDisconnectCounter.close(uuid)
                     gatt.close()
                 }
@@ -320,39 +308,40 @@ class GattFacadeImpl(override val device: BluetoothDevice,
 
     private suspend fun readRemoteRSSI(timeoutMs: Long)
         : RSSIResult = suspendCancellableCoroutine { continuation ->
-        try {
-            // For some reason using SAM on OnReadRemoteRSSI fun iface cause exception
-            onReadRSSICallback = object : OnReadRemoteRSSI {
-                override fun onReadRemoteRssi(gatt: BluetoothGatt, rssi: Int, status: Int) {
-                    onReadRSSICallback = null
-                    if (status == GATT_SUCCESS) {
-                        this@GattFacadeImpl.rssi.value = rssi
-                        continuation.resume(RSSIResult.RSSISuccess(rssi))
-                    } else {
-                        l?.e("${deviceTag()} FAILED TO READ RSSI: STATUS CODE $status")
-                        continuation.resume(RSSIResult.RSSIError(status))
+        mainThreadHandler.post {
+            try {
+                // For some reason using SAM on OnReadRemoteRSSI fun iface cause exception
+                onReadRSSICallback = object : OnReadRemoteRSSI {
+                    override fun onReadRemoteRssi(gatt: BluetoothGatt, rssi: Int, status: Int) {
+                        onReadRSSICallback = null
+                        if (status == GATT_SUCCESS) {
+                            this@GattFacadeImpl.rssi.value = rssi
+                            continuation.resume(RSSIResult.RSSISuccess(rssi))
+                        } else {
+                            l?.e("${deviceTag()} FAILED TO READ RSSI: STATUS CODE $status")
+                            continuation.resume(RSSIResult.RSSIError(status))
+                        }
                     }
-                }
 
-            }
-            mainThreadHandler.post {
-                if(!gatt.readRemoteRssi()) {
+                }
+                if (!gatt.readRemoteRssi()) {
                     onReadRSSICallback = null
                     l?.e("${deviceTag()} FAILED TO READ RSSI: DEVICE IS BUSY")
                     continuation.resume(RSSIResult.DeviceIsBusy)
+                    return@post
                 }
-            }
-        } catch (tr: Throwable) {
-            onReadRSSICallback = null
-            if (tr is TimeoutCancellationException) {
-                l?.e("${deviceTag()} FAILED TO READ RSSI: OPERATION TIMEOUT $timeoutMs")
-                continuation.resume(RSSIResult.OperationTimeout(timeoutMs))
-                return@suspendCancellableCoroutine
-            } else {
-                l?.e("${deviceTag()} FAILED TO READ RSSI: OPERATION EXCEPTION", tr)
-                continuation.resume(RSSIResult.OperationException(tr))
-                tr.printStackTrace()
-                return@suspendCancellableCoroutine
+            } catch (tr: Throwable) {
+                onReadRSSICallback = null
+                if (tr is TimeoutCancellationException) {
+                    l?.e("${deviceTag()} FAILED TO READ RSSI: OPERATION TIMEOUT $timeoutMs")
+                    continuation.resume(RSSIResult.OperationTimeout(timeoutMs))
+                    return@post
+                } else {
+                    l?.e("${deviceTag()} FAILED TO READ RSSI: OPERATION EXCEPTION", tr)
+                    continuation.resume(RSSIResult.OperationException(tr))
+                    tr.printStackTrace()
+                    return@post
+                }
             }
         }
     }
@@ -381,40 +370,40 @@ class GattFacadeImpl(override val device: BluetoothDevice,
             if (!gatt.setCharacteristicNotification(characteristic, true)) {
                 l?.e("${deviceTag()} FAILED TO SET SUBSCRIPTION FLAG TO ${characteristic.uuid}!")
                 continuation.resume(SubscriptionResult.SubscriptionError(-228))
+                return@post
             }
-        }
-        try {
-            val descriptor = characteristic.getDescriptor(CLIENT_CHARACTERISTIC_CONFIG_UUID)
-            descriptor.value = BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE
-            subscriptionCallback = object : SubscriptionDescriptorCallback {
-                override fun onDescriptorWrite(gatt: BluetoothGatt, descriptor: BluetoothGattDescriptor, status: Int) {
-                    subscriptionCallback = null
-                    if (status == GATT_SUCCESS) {
-                        l?.i("${deviceTag()} subscribed to ${characteristic.uuid}")
-                        continuation.resume(SubscriptionResult.SubscriptionSuccess)
-                    } else {
-                        l?.e("${deviceTag()} FAILED TO SUBSCRIBE TO ${characteristic.uuid} ; STATUS CODE: $status!")
-                        continuation.resume(SubscriptionResult.SubscriptionError(status))
+            try {
+                val descriptor = characteristic.getDescriptor(CLIENT_CHARACTERISTIC_CONFIG_UUID)
+                descriptor.value = BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE
+                subscriptionCallback = object : SubscriptionDescriptorCallback {
+                    override fun onDescriptorWrite(gatt: BluetoothGatt, descriptor: BluetoothGattDescriptor, status: Int) {
+                        subscriptionCallback = null
+                        if (status == GATT_SUCCESS) {
+                            l?.i("${deviceTag()} subscribed to ${characteristic.uuid}")
+                            continuation.resume(SubscriptionResult.SubscriptionSuccess)
+                        } else {
+                            l?.e("${deviceTag()} FAILED TO SUBSCRIBE TO ${characteristic.uuid} ; STATUS CODE: $status!")
+                            continuation.resume(SubscriptionResult.SubscriptionError(status))
+                        }
                     }
                 }
-            }
-            mainThreadHandler.post {
                 if (!gatt.writeDescriptor(descriptor)) {
                     subscriptionCallback = null
                     l?.e("${deviceTag()} FAILED TO SUBSCRIBE TO ${characteristic.uuid} ; DEVICE IS BUSY!")
                     continuation.resume(SubscriptionResult.DeviceIsBusy)
+                    return@post
                 }
-            }
-        } catch (tr: Throwable) {
-            subscriptionCallback = null
-            if (tr is TimeoutCancellationException) {
-                l?.e("${deviceTag()} FAILED TO SUBSCRIBE TO ${characteristic.uuid}: OPERATION TIMEOUT $timeoutMs")
-                continuation.resume(SubscriptionResult.OperationTimeout(timeoutMs))
-                return@suspendCancellableCoroutine
-            } else {
-                l?.e("${deviceTag()} FAILED TO SUBSCRIBE TO ${characteristic.uuid}: OPERATION EXCEPTION", tr)
-                continuation.resume(SubscriptionResult.OperationException(tr))
-                return@suspendCancellableCoroutine
+            } catch (tr: Throwable) {
+                subscriptionCallback = null
+                if (tr is TimeoutCancellationException) {
+                    l?.e("${deviceTag()} FAILED TO SUBSCRIBE TO ${characteristic.uuid}: OPERATION TIMEOUT $timeoutMs")
+                    continuation.resume(SubscriptionResult.OperationTimeout(timeoutMs))
+                    return@post
+                } else {
+                    l?.e("${deviceTag()} FAILED TO SUBSCRIBE TO ${characteristic.uuid}: OPERATION EXCEPTION", tr)
+                    continuation.resume(SubscriptionResult.OperationException(tr))
+                    return@post
+                }
             }
         }
     }
@@ -431,39 +420,40 @@ class GattFacadeImpl(override val device: BluetoothDevice,
     @RequiresApi(Build.VERSION_CODES.LOLLIPOP)
     private suspend fun requestMTU(desiredMTU: Int, timeoutMs: Long)
             : MTUResult = suspendCancellableCoroutine { continuation ->
-        try {
-            require(desiredMTU in MTU_MIN..MTU_MAX)
-            mtuCallback = object : OnMTUChanged {
-                override fun onMTUChanged(gatt: BluetoothGatt, mtu1: Int, status: Int) {
-                    mtuCallback = null
-                    if (status == GATT_SUCCESS) {
-                        mtu.value = mtu1
-                        l?.i("${deviceTag()} MTU callback invoked (value $mtu1)")
-                        continuation.resume(MTUResult.MTUSuccess(mtu1))
-                    } else {
-                        l?.e("${deviceTag()} MTU ERROR : STATUS CODE $status")
-                        continuation.resume(MTUResult.MTUError(status))
+        mainThreadHandler.post {
+            try {
+                require(desiredMTU in MTU_MIN..MTU_MAX)
+                mtuCallback = object : OnMTUChanged {
+                    override fun onMTUChanged(gatt: BluetoothGatt, mtu1: Int, status: Int) {
+                        mtuCallback = null
+                        if (status == GATT_SUCCESS) {
+                            mtu.value = mtu1
+                            l?.i("${deviceTag()} MTU callback invoked (value $mtu1)")
+                            continuation.resume(MTUResult.MTUSuccess(mtu1))
+                        } else {
+                            l?.e("${deviceTag()} MTU ERROR : STATUS CODE $status")
+                            continuation.resume(MTUResult.MTUError(status))
+                        }
                     }
                 }
-            }
-            mainThreadHandler.post {
-                if(!gatt.requestMtu(desiredMTU)) {
+                if (!gatt.requestMtu(desiredMTU)) {
                     mtuCallback = null
                     l?.e("${deviceTag()} MTU ERROR : DEVICE IS BUSY")
                     continuation.resume(MTUResult.DeviceIsBusy)
+                    return@post
                 }
-            }
-        } catch (tr: Throwable) {
-            if(tr is TimeoutCancellationException) {
-                mtuCallback = null
-                l?.e("${deviceTag()} FAILED TO EXECUTE MTU REQUEST: OPERATION TIMEOUT $timeoutMs")
-                continuation.resume(MTUResult.OperationTimeout(timeoutMs))
-                return@suspendCancellableCoroutine
-            } else {
-                mtuCallback = null
-                l?.e("${deviceTag()} FAILED TO EXECUTE MTU REQUEST: OPERATION EXCEPTION", tr)
-                continuation.resume(MTUResult.OperationException(tr))
-                return@suspendCancellableCoroutine
+            } catch (tr: Throwable) {
+                if (tr is TimeoutCancellationException) {
+                    mtuCallback = null
+                    l?.e("${deviceTag()} FAILED TO EXECUTE MTU REQUEST: OPERATION TIMEOUT $timeoutMs")
+                    continuation.resume(MTUResult.OperationTimeout(timeoutMs))
+                    return@post
+                } else {
+                    mtuCallback = null
+                    l?.e("${deviceTag()} FAILED TO EXECUTE MTU REQUEST: OPERATION EXCEPTION", tr)
+                    continuation.resume(MTUResult.OperationException(tr))
+                    return@post
+                }
             }
         }
     }
@@ -492,54 +482,55 @@ class GattFacadeImpl(override val device: BluetoothDevice,
 
     private suspend fun read(target: BluetoothGattCharacteristic, timeoutMs: Long)
             : ReadResult = suspendCancellableCoroutine { continuation ->
-        try {
-            val callback = object : OnCharacteristicRead {
-                override fun onCharacteristicRead(gatt: BluetoothGatt, characteristic: BluetoothGattCharacteristic, status: Int) {
-                    callbacks.remove(target)
-                    if (target.uuid == characteristic.uuid) {
-                        if (status == GATT_SUCCESS) {
-                            val value: ByteArray? = characteristic.value
-                            if (value == null || value.isEmpty()) {
-                                l?.w("${deviceTag()} Read ${characteristic.uuid} result is null or empty")
-                                continuation.resume(ReadResult.ReadSuccess(byteArrayOf()))
+        mainThreadHandler.post {
+            try {
+                val callback = object : OnCharacteristicRead {
+                    override fun onCharacteristicRead(gatt: BluetoothGatt, characteristic: BluetoothGattCharacteristic, status: Int) {
+                        callbacks.remove(target)
+                        if (target.uuid == characteristic.uuid) {
+                            if (status == GATT_SUCCESS) {
+                                val value: ByteArray? = characteristic.value
+                                if (value == null || value.isEmpty()) {
+                                    l?.w("${deviceTag()} Read ${characteristic.uuid} result is null or empty")
+                                    continuation.resume(ReadResult.ReadSuccess(byteArrayOf()))
+                                } else {
+                                    l?.i("${deviceTag()} Read ${characteristic.uuid}: ${Hex.toPrettyHexString(value)}")
+                                    continuation.resume(ReadResult.ReadSuccess(value))
+                                }
                             } else {
-                                l?.i("${deviceTag()} Read ${characteristic.uuid}: ${Hex.toPrettyHexString(value)}")
-                                continuation.resume(ReadResult.ReadSuccess(value))
+                                l?.e("${deviceTag()} READ ERROR : STATUS CODE $status; CHAR ${target.uuid}")
+                                continuation.resume(ReadResult.ReadError(status))
                             }
                         } else {
-                            l?.e("${deviceTag()} READ ERROR : STATUS CODE $status; CHAR ${target.uuid}")
-                            continuation.resume(ReadResult.ReadError(status))
+                            l?.e("${deviceTag()} READ ERROR : WRONG CALLBACK; CHAR ${target.uuid}")
+                            continuation.resume(ReadResult.WrongCharacteristicCallback)
                         }
-                    } else {
-                        l?.e("${deviceTag()} READ ERROR : WRONG CALLBACK; CHAR ${target.uuid}")
-                        continuation.resume(ReadResult.WrongCharacteristicCallback)
                     }
                 }
-            }
-            callbacks[target]?.let {
-                l?.e("${deviceTag()} READ ERROR : DEVICE IS BUSY; CHAR ${target.uuid}")
-                continuation.resume(ReadResult.DeviceIsBusy)
-                return@suspendCancellableCoroutine
-            }
-            callbacks[target] = callback
-            mainThreadHandler.post {
-                if(!gatt.readCharacteristic(target)) {
+                callbacks[target]?.let {
+                    l?.e("${deviceTag()} READ ERROR : DEVICE IS BUSY; CHAR ${target.uuid}")
+                    continuation.resume(ReadResult.DeviceIsBusy)
+                    return@post
+                }
+                callbacks[target] = callback
+                if (!gatt.readCharacteristic(target)) {
                     callbacks.remove(target)
                     l?.e("${deviceTag()} READ ERROR : DEVICE IS BUSY; CHAR ${target.uuid}")
                     continuation.resume(ReadResult.DeviceIsBusy)
+                    return@post
                 }
-            }
-        } catch (tr: Throwable) {
-            callbacks.remove(target)
-            if(tr is TimeoutCancellationException) {
-                l?.e("${deviceTag()} READ ERROR: OPERATION TIMEOUT $timeoutMs; CHAR ${target.uuid}")
-                continuation.resume(ReadResult.OperationTimeout(timeoutMs))
-                return@suspendCancellableCoroutine
-            } else {
+            } catch (tr: Throwable) {
                 callbacks.remove(target)
-                l?.e("${deviceTag()} READ ERROR: OPERATION EXCEPTION; CHAR ${target.uuid}", tr)
-                continuation.resume(ReadResult.OperationException(tr))
-                return@suspendCancellableCoroutine
+                if (tr is TimeoutCancellationException) {
+                    l?.e("${deviceTag()} READ ERROR: OPERATION TIMEOUT $timeoutMs; CHAR ${target.uuid}")
+                    continuation.resume(ReadResult.OperationTimeout(timeoutMs))
+                    return@post
+                } else {
+                    callbacks.remove(target)
+                    l?.e("${deviceTag()} READ ERROR: OPERATION EXCEPTION; CHAR ${target.uuid}", tr)
+                    continuation.resume(ReadResult.OperationException(tr))
+                    return@post
+                }
             }
         }
     }
@@ -562,48 +553,49 @@ class GattFacadeImpl(override val device: BluetoothDevice,
 
     private suspend fun write(target: BluetoothGattCharacteristic, bytes: ByteArray, timeoutMs: Long)
             : WriteResult = suspendCancellableCoroutine { continuation ->
-        try {
-            val writeCallback = object : OnCharacteristicWrite {
-                override fun onCharacteristicWrite(gatt: BluetoothGatt, characteristic: BluetoothGattCharacteristic, status: Int) {
-                    callbacks.remove(target)
-                    if (target.uuid == characteristic.uuid) {
-                        if (status == GATT_SUCCESS) {
-                            l?.i("${deviceTag()} Write ${characteristic.uuid}: ${Hex.toPrettyHexString(bytes)}")
-                            continuation.resume(WriteResult.WriteSuccess)
+        mainThreadHandler.post {
+            try {
+                val writeCallback = object : OnCharacteristicWrite {
+                    override fun onCharacteristicWrite(gatt: BluetoothGatt, characteristic: BluetoothGattCharacteristic, status: Int) {
+                        callbacks.remove(target)
+                        if (target.uuid == characteristic.uuid) {
+                            if (status == GATT_SUCCESS) {
+                                l?.i("${deviceTag()} Write ${characteristic.uuid}: ${Hex.toPrettyHexString(bytes)}")
+                                continuation.resume(WriteResult.WriteSuccess)
+                            } else {
+                                l?.e("${deviceTag()} WRITE ERROR : STATUS CODE $status; CHAR ${target.uuid}")
+                                continuation.resume(WriteResult.WriteError(status))
+                            }
                         } else {
-                            l?.e("${deviceTag()} WRITE ERROR : STATUS CODE $status; CHAR ${target.uuid}")
-                            continuation.resume(WriteResult.WriteError(status))
+                            l?.e("${deviceTag()} WRITE ERROR : WRONG CALLBACK; CHAR ${target.uuid}")
+                            continuation.resume(WriteResult.WrongCharacteristicCallback)
                         }
-                    } else {
-                        l?.e("${deviceTag()} WRITE ERROR : WRONG CALLBACK; CHAR ${target.uuid}")
-                        continuation.resume(WriteResult.WrongCharacteristicCallback)
                     }
                 }
-            }
-            callbacks[target]?.let {
-                continuation.resume(WriteResult.DeviceIsBusy)
-                return@suspendCancellableCoroutine
-            }
-            callbacks[target] = writeCallback
-            target.value = bytes
-            mainThreadHandler.post {
-                if(!gatt.writeCharacteristic(target)) {
+                callbacks[target]?.let {
+                    continuation.resume(WriteResult.DeviceIsBusy)
+                    return@post
+                }
+                callbacks[target] = writeCallback
+                target.value = bytes
+                if (!gatt.writeCharacteristic(target)) {
                     l?.e("${deviceTag()} WRITE ERROR : DEVICE IS BUSY; CHAR ${target.uuid}")
                     callbacks.remove(target)
                     continuation.resume(WriteResult.DeviceIsBusy)
+                    return@post
                 }
-            }
-        } catch (tr: Throwable) {
-            if(tr is TimeoutCancellationException) {
-                callbacks.remove(target)
-                continuation.resume(WriteResult.OperationTimeout(timeoutMs))
-                l?.e("${deviceTag()} WRITE ERROR: OPERATION TIMEOUT $timeoutMs; CHAR ${target.uuid}")
-                return@suspendCancellableCoroutine
-            } else {
-                callbacks.remove(target)
-                l?.e("${deviceTag()} WRITE ERROR: OPERATION EXCEPTION; CHAR ${target.uuid}", tr)
-                continuation.resume(WriteResult.OperationException(tr))
-                return@suspendCancellableCoroutine
+            } catch (tr: Throwable) {
+                if (tr is TimeoutCancellationException) {
+                    callbacks.remove(target)
+                    continuation.resume(WriteResult.OperationTimeout(timeoutMs))
+                    l?.e("${deviceTag()} WRITE ERROR: OPERATION TIMEOUT $timeoutMs; CHAR ${target.uuid}")
+                    return@post
+                } else {
+                    callbacks.remove(target)
+                    l?.e("${deviceTag()} WRITE ERROR: OPERATION EXCEPTION; CHAR ${target.uuid}", tr)
+                    continuation.resume(WriteResult.OperationException(tr))
+                    return@post
+                }
             }
         }
     }
@@ -619,10 +611,6 @@ class GattFacadeImpl(override val device: BluetoothDevice,
 
         override fun onConnectionStateChange(gatt: BluetoothGatt, status: Int, newState: Int) {
             deviceState.value.let { previous ->
-                // TODO #575 remove
-                if(status == GattCode.GATT_FAILURE) {
-                    print("=(")
-                }
                 if(status == GATT_SUCCESS) {
                     when (newState) {
                         STATE_DISCONNECTED -> {
@@ -655,11 +643,6 @@ class GattFacadeImpl(override val device: BluetoothDevice,
                                 Thread.sleep(600L)
                                 l?.i("${deviceTag()} discovering services...")
                                 mainThreadHandler.post {
-                                    // TODO #575 thread check
-                                    Log.e(
-                                        "ThreadCheck",
-                                        "gat.discoverServices : ${Thread.currentThread().name}"
-                                    )
                                     gatt.discoverServices()
                                 }
                             } else {

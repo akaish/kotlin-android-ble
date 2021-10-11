@@ -88,6 +88,12 @@ interface IGattFacade {
     val deviceState : StateFlow<BleConnection>
 
     /**
+     * PHY value, one of [BluetoothDevice.PHY_LE_1M], [BluetoothDevice.PHY_LE_2M] etc
+     * Default implementation value is BluetoothDevice.PHY_LE_1M without constant link (e.g. 1)
+     */
+    val phyLe : Int
+
+    /**
      * This void should be called when BleDevice implementation done all connection routine and preparations
      */
     fun onReady()

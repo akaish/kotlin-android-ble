@@ -29,11 +29,9 @@ import android.bluetooth.BluetoothManager
 import android.bluetooth.le.*
 import android.content.Context
 import android.os.Build
-import android.os.Handler
-import android.os.Looper
-import android.util.Log
 import androidx.annotation.IntRange
 import androidx.annotation.RequiresApi
+import androidx.annotation.UiThread
 import kotlinx.coroutines.*
 import kotlinx.coroutines.channels.BroadcastChannel
 import kotlinx.coroutines.channels.BufferOverflow
@@ -237,23 +235,6 @@ class BleScanner(
     @Volatile private var onScanResultListener: OnScanResult? = null
     @Volatile private var onRawScanResultListener: OnRawScanResult? = null
 
-    // 2021-10-10 03:26:07.466 24011-24696/ru.ikey.express E/AndroidRuntime: FATAL EXCEPTION: DefaultDispatcher-worker-10
-    //    Process: ru.ikey.express, PID: 24011
-    //    java.util.NoSuchElementException
-    //        at java.util.concurrent.ConcurrentLinkedQueue$Itr.next(ConcurrentLinkedQueue.java:733)
-    //        at kotlin.collections.CollectionsKt___CollectionsKt.toList(_Collections.kt:1313)
-    //        at net.akaish.kab.scanner.BleScanner.emitResults(BleScanner.kt:237)
-    //        at net.akaish.kab.scanner.BleScanner.access$emitResults(BleScanner.kt:59)
-    //        at net.akaish.kab.scanner.BleScanner$startResultsEmission$2$invokeSuspend$$inlined$collect$1.emit(Collect.kt:133)
-    //        at kotlinx.coroutines.flow.FlowKt__ChannelsKt.emitAllImpl$FlowKt__ChannelsKt(Channels.kt:61)
-    //        at kotlinx.coroutines.flow.FlowKt__ChannelsKt$emitAllImpl$1.invokeSuspend(Unknown Source:11)
-    //        at kotlin.coroutines.jvm.internal.BaseContinuationImpl.resumeWith(ContinuationImpl.kt:33)
-    //        at kotlinx.coroutines.DispatchedTask.run(DispatchedTask.kt:106)
-    //        at kotlinx.coroutines.scheduling.CoroutineScheduler.runSafely(CoroutineScheduler.kt:571)
-    //        at kotlinx.coroutines.scheduling.CoroutineScheduler$Worker.executeTask(CoroutineScheduler.kt:750)
-    //        at kotlinx.coroutines.scheduling.CoroutineScheduler$Worker.runWorker(CoroutineScheduler.kt:678)
-    //        at kotlinx.coroutines.scheduling.CoroutineScheduler$Worker.run(CoroutineScheduler.kt:665)
-    // TODO TODO TODO
     private fun emitResults() {
         try {
             val result =
@@ -261,7 +242,7 @@ class BleScanner(
             onScanResultListener?.onScanResult(result)
             scanResultsChannel.offer(result)
         } catch (tr: Throwable) {
-            l?.e("emitResults()", tr)
+            l?.i("emitResults() : skipping emission", tr)
         }
     }
 
@@ -315,7 +296,6 @@ class BleScanner(
 
     private fun stopResultsEmission() {
         isScanning.value = ScannerState.Idle
-        Log.e("sss", "!!!! ${isScanning.value}")
         if(this::job.isInitialized)
             job.cancel()
     }
@@ -327,9 +307,11 @@ class BleScanner(
     private var leCallback: LEScanCallback? = null
     private lateinit var adapter: BluetoothAdapter
 
-    @Synchronized override fun startScan(context: Context, scanFilters: List<BleScanFilter>, scanSettings: ScanSettings?, minRssiToEmit: Int) : Boolean {
-        // TODO #575 thread check
-        Log.e("ThreadCheck", "startScan : ${Thread.currentThread().name}")
+    @UiThread
+    @Synchronized override fun startScan(context: Context,
+                                         scanFilters: List<BleScanFilter>,
+                                         scanSettings: ScanSettings?,
+                                         minRssiToEmit: Int) : Boolean {
         this.minRssiToEmit = minRssiToEmit
         try {
             adapter = (context.getSystemService(Context.BLUETOOTH_SERVICE) as BluetoothManager).adapter
@@ -342,7 +324,6 @@ class BleScanner(
             } else {
                 leCallback?.let {
                     stopResultsEmission()
-                    Log.e("assad", "----------------------------------------------------------------")
                     val scanner: BluetoothLeScanner = adapter.bluetoothLeScanner
                     scanner.stopScan(it)
                 }
@@ -386,9 +367,8 @@ class BleScanner(
         }
     }
 
+    @UiThread
     @Synchronized  override fun stopScan() : Boolean {
-        // TODO #575 thread check
-        Log.e("ThreadCheck", "stopScan : ${Thread.currentThread().name}")
         try {
             if (Build.VERSION.SDK_INT < Build.VERSION_CODES.LOLLIPOP) {
                 compatCallback?.let {

@@ -72,13 +72,18 @@ interface IBleDevice {
 
     val disableExceptions: AtomicBoolean
 
+    val desiredPhyLe: Int
+
     //----------------------------------------------------------------------------------------------
     // Connection routine
     //----------------------------------------------------------------------------------------------
     /**
      * Connect device and prepare for application usage
+     * @param device - remote device to connect
+     * @param context - application context for registration etc
+     * @param transport - connection transport, depends on API level, see [BluetoothDevice.TRANSPORT_LE], [BluetoothDevice.TRANSPORT_AUTO] etc
      */
-    fun connect(device: BluetoothDevice, context: Context, transport: Int? = null)
+    fun connect(device: BluetoothDevice, context: Context, transport: Int = 0)
 
     /**
      * @return true if device connected via bluetooth
