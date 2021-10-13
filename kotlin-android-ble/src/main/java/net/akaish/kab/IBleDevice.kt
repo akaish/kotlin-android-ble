@@ -24,19 +24,21 @@
 package net.akaish.kab
 
 import android.bluetooth.BluetoothDevice
+import android.bluetooth.BluetoothGatt
 import android.bluetooth.BluetoothGattCharacteristic
 import android.content.Context
-import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.channels.BroadcastChannel
+import net.akaish.kab.IGattFacade.Companion.CONNECTED_STATE_TIMEOUT_DEFAULTS
+import net.akaish.kab.IGattFacade.Companion.CONNECTING_STATE_TIMEOUT_DEFAULTS
+import net.akaish.kab.IGattFacade.Companion.DISCONNECTED_STATE_TIMEOUT_DEFAULTS
+import net.akaish.kab.IGattFacade.Companion.SERVICE_DISCOVERY_TIMEOUT_DEFAULTS
 import net.akaish.kab.model.ApplicationCharacteristic
 import net.akaish.kab.model.TargetCharacteristic
 import net.akaish.kab.result.ReadResult
 import net.akaish.kab.result.WriteResult
 import net.akaish.kab.utility.ILogger
-import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
-import kotlin.coroutines.CoroutineContext
 
 @ExperimentalCoroutinesApi
 interface IBleDevice {
@@ -47,6 +49,7 @@ interface IBleDevice {
     /**
      * @return ble device name.
      */
+    @Suppress("Unused")
     fun bleDeviceName() : String
 
     /**
@@ -73,6 +76,71 @@ interface IBleDevice {
     val disableExceptions: AtomicBoolean
 
     val desiredPhyLe: Int
+
+    //----------------------------------------------------------------------------------------------
+    // Gatt configuration
+    //----------------------------------------------------------------------------------------------
+    /*
+ * Timeouts
+ */
+    /**
+     * Service timeout discovery timeout: after device connection gatt.discoverServices would be called,
+     * if onServicesDiscovered would not be invoked before timeout, connection state would be changed to
+     * [net.akaish.kab.model.BleConnectionState.ServicesDiscoveryTimeout]
+     * App code may ignore this state or disconnect device.
+     * Default value in library implementation would be [SERVICE_DISCOVERY_TIMEOUT_DEFAULTS],
+     * if value is null then no timeout would be used.
+     *
+     */
+    val serviceDiscoveryTimeout: Long?
+
+    /**
+     * Connecting timeout: after gatt.connect method would be called if connecting value callback would
+     * not be called within timeout, connection state would be changed to
+     * [net.akaish.kab.model.BleConnectionState.ConnectionStateTimeout]
+     * App code may ignore this state or disconnect device.
+     * Default value in library implementation would be [CONNECTING_STATE_TIMEOUT_DEFAULTS],
+     * if value is null then no timeout would be used.
+     */
+    val connectingTimeout: Long?
+
+    /**
+     * Connected timeout: after state connecting received method would be called if connected callback would
+     * not be called within timeout, connection state would be changed to
+     * [net.akaish.kab.model.BleConnectionState.ConnectionStateTimeout]
+     * App code may ignore this state or disconnect device.
+     * Default value in library implementation would be [CONNECTED_STATE_TIMEOUT_DEFAULTS],
+     * if value is null then no timeout would be used.
+     */
+    val connectedTimeout: Long?
+
+    /**
+     * Disconnected timeout: after disconnected method invoked if connected callback would
+     * not be called within timeout, connection state would be changed to
+     * [net.akaish.kab.model.BleConnectionState.DisconnectedStateTimeout]
+     * App code may ignore this state or disconnect device.
+     * Default value in library implementation would be [DISCONNECTED_STATE_TIMEOUT_DEFAULTS],
+     * if value is null then no timeout would be used.
+     * NOT USED RIGHT NOW
+     */
+    val disconnectedTimeout: Long?
+
+    /**
+     * Delay in ms to change connection state to [net.akaish.kab.model.BleConnectionState.Disconnected]
+     * after [BluetoothGatt.STATE_DISCONNECTED] callback received
+     */
+    val disconnectedEventDelay: Long?
+
+    /**
+     * Delay in ms to start gatt.discoverServices after [BluetoothGatt.STATE_CONNECTED] callback received
+     */
+    val serviceDiscoveryDelay: Long?
+
+    /**
+     * Amount of retries for accessing gatt operations (not connection state operations)
+     * Only gatt busy retries, default value : 1
+     */
+    val retryGattOperationsTime: Int
 
     //----------------------------------------------------------------------------------------------
     // Connection routine

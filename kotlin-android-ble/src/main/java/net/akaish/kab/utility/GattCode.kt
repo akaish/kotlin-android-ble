@@ -205,4 +205,7 @@ object GattCode {
      * **See Also:** [Nordic's Android Ble lib](https://github.com/NordicSemiconductor/Android-BLE-Library/blob/b1f3b1d0d65991e3b3aae15630528266f55ceed9/ble/src/main/java/no/nordicsemi/android/ble/error/GattError.java#L81)
      */
     const val GATT_FAILURE = BluetoothGatt.GATT_FAILURE
+
+    const val APP_GATT_SERVICES_ACQUIRE_FAILURE = 0x201
+    const val APP_GATT_CONNECTION_STAGE_TIMEOUT = 0x202
 }

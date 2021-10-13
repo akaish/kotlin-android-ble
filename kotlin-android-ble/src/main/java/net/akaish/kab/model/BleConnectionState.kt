@@ -24,13 +24,31 @@
 package net.akaish.kab.model
 
 import android.bluetooth.BluetoothGatt
+import net.akaish.kab.utility.GattCode.APP_GATT_CONNECTION_STAGE_TIMEOUT
+import net.akaish.kab.utility.GattCode.APP_GATT_SERVICES_ACQUIRE_FAILURE
 
 sealed class BleConnectionState(val stateId: Int) {
-    object Started : BleConnectionState(BluetoothGatt.STATE_DISCONNECTED)
-    object Disconnected : BleConnectionState(BluetoothGatt.STATE_DISCONNECTED)
-    object Connecting : BleConnectionState(BluetoothGatt.STATE_CONNECTING)
-    object Connected : BleConnectionState(BluetoothGatt.STATE_CONNECTED)
-    object Disconnecting : BleConnectionState(BluetoothGatt.STATE_DISCONNECTING)
+
+    companion object {
+        const val B_STATE_DISCONNECTED = BluetoothGatt.STATE_DISCONNECTED
+        const val B_STATE_CONNECTING = BluetoothGatt.STATE_CONNECTING
+        const val B_STATE_DISCONNECTING = BluetoothGatt.STATE_DISCONNECTING
+        const val B_STATE_CONNECTED = BluetoothGatt.STATE_CONNECTED
+
+        const val B_STATE_CONNECTION_OBJECT_CREATED = 0x991
+        const val B_STATE_SERVICES_DISCOVERY_STARTED = 0x992
+        const val B_STATE_SERVICES_DISCOVERY_ERROR = 0x993
+        const val B_STATE_SERVICES_DISCOVERED = 0x994
+        const val B_STATE_CONNECTION_STAGE_TIMEOUT = 0x995
+        const val B_STATE_CONNECTION_READY = 0x996
+    }
+
+    object Started : BleConnectionState(B_STATE_CONNECTION_OBJECT_CREATED)
+
+    object Disconnected : BleConnectionState(B_STATE_DISCONNECTED)
+    object Connecting : BleConnectionState(B_STATE_CONNECTING)
+    object Connected : BleConnectionState(B_STATE_CONNECTED)
+    object Disconnecting : BleConnectionState(B_STATE_DISCONNECTING)
     class UnknownState(stateId: Int) : BleConnectionState(stateId)
 
 //        Possible errors:
@@ -54,7 +72,12 @@ sealed class BleConnectionState(val stateId: Int) {
 //        val GATT_FAILURE = 0x101
 
     class ConnectionStateError(stateId: Int, val status: Int) : BleConnectionState(stateId)
-    class ServiceDiscoveryError(stateId: Int, val status: Int) : BleConnectionState(stateId)
-    class ServicesSupported(stateId: Int, val status: Int) : BleConnectionState(stateId)
-    class Ready(stateId: Int, val status: Int) : BleConnectionState(stateId)
+    class ServicesDiscoveryError(val status: Int = APP_GATT_SERVICES_ACQUIRE_FAILURE) : BleConnectionState(B_STATE_SERVICES_DISCOVERY_ERROR)
+    object ServicesDiscoveryStarted : BleConnectionState(B_STATE_SERVICES_DISCOVERY_STARTED)
+    class ServicesDiscoveryTimeout(val status: Int = APP_GATT_CONNECTION_STAGE_TIMEOUT) : BleConnectionState(B_STATE_SERVICES_DISCOVERY_ERROR)
+    object ServicesDiscovered : BleConnectionState(B_STATE_SERVICES_DISCOVERED)
+    object ConnectionReady : BleConnectionState(B_STATE_CONNECTION_READY)
+
+    class ConnectionStateTimeout(val status: Int = APP_GATT_CONNECTION_STAGE_TIMEOUT) : BleConnectionState(B_STATE_CONNECTION_STAGE_TIMEOUT)
+    object DisconnectedStateTimeout : BleConnectionState(B_STATE_CONNECTION_STAGE_TIMEOUT)
 }

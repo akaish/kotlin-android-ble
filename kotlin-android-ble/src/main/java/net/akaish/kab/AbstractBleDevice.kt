@@ -27,6 +27,7 @@ import android.bluetooth.BluetoothDevice
 import android.bluetooth.BluetoothManager
 import android.bluetooth.BluetoothProfile.GATT
 import android.content.Context
+import androidx.annotation.IntRange
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.collect
 import net.akaish.kab.BleConstants.Companion.MIN_RSSI_UPDATE_PERIOD
@@ -35,6 +36,12 @@ import net.akaish.kab.BleConstants.Companion.READ_TIMEOUT
 import net.akaish.kab.BleConstants.Companion.RSSI_TIMEOUT
 import net.akaish.kab.BleConstants.Companion.SUBSCRIPTION_TIMEOUT
 import net.akaish.kab.BleConstants.Companion.WRITE_TIMEOUT
+import net.akaish.kab.IGattFacade.Companion.CONNECTED_STATE_TIMEOUT_DEFAULTS
+import net.akaish.kab.IGattFacade.Companion.CONNECTING_STATE_TIMEOUT_DEFAULTS
+import net.akaish.kab.IGattFacade.Companion.DISCONNECTED_STATE_TIMEOUT_DEFAULTS
+import net.akaish.kab.IGattFacade.Companion.DISCONNECT_STATE_DELAY_DEFAULTS
+import net.akaish.kab.IGattFacade.Companion.SERVICE_DISCOVERY_DELAY_DEFAULTS
+import net.akaish.kab.IGattFacade.Companion.SERVICE_DISCOVERY_TIMEOUT_DEFAULTS
 import net.akaish.kab.model.BleConnectionState
 import net.akaish.kab.model.ServiceType
 import net.akaish.kab.model.TargetCharacteristic
@@ -55,7 +62,16 @@ abstract class AbstractBleDevice(override val disableExceptions: AtomicBoolean,
                                  override val desiredMTU: Int? = null,
                                  override val autoSubscription: Boolean = true,
                                  override val l: ILogger? = BleLogger("Ble"),
-                                 override val onBleDeviceDisconnected: OnBleDeviceDisconnected? = null) : IBleScopedDevice {
+                                 override val onBleDeviceDisconnected: OnBleDeviceDisconnected? = null,
+                                 // timeouts
+                                 override val serviceDiscoveryTimeout: Long? = SERVICE_DISCOVERY_TIMEOUT_DEFAULTS,
+                                 override val connectingTimeout: Long? = CONNECTING_STATE_TIMEOUT_DEFAULTS,
+                                 override val connectedTimeout: Long? = CONNECTED_STATE_TIMEOUT_DEFAULTS,
+                                 override val disconnectedTimeout: Long? = DISCONNECTED_STATE_TIMEOUT_DEFAULTS,
+                                 override val disconnectedEventDelay: Long? = DISCONNECT_STATE_DELAY_DEFAULTS,
+                                 override val serviceDiscoveryDelay: Long? = SERVICE_DISCOVERY_DELAY_DEFAULTS,
+                                 @IntRange(from = 1, to = Int.MAX_VALUE.toLong())
+                                 override val retryGattOperationsTime: Int = 1) : IBleScopedDevice {
 
     /**
      * Instance of GattCallback instance where all magic of flattening callbacks into raw coroutine
@@ -90,7 +106,14 @@ abstract class AbstractBleDevice(override val disableExceptions: AtomicBoolean,
                     l = l,
                     applicationServices = applicationCharacteristics,
                     disableExceptions = disableExceptions,
-                    phyLe = desiredPhyLe)
+                    phyLe = desiredPhyLe,
+                    serviceDiscoveryTimeout = serviceDiscoveryTimeout,
+                    connectingTimeout = connectingTimeout,
+                    connectedTimeout = connectedTimeout,
+                    disconnectedTimeout = disconnectedTimeout,
+                    disconnectedEventDelay = disconnectedEventDelay,
+                    serviceDiscoveryStartTimeout = serviceDiscoveryDelay,
+                    retryGattOperationsTime = retryGattOperationsTime)
                 facadeImpl.connect(context, false, transport)
                 facadeImpl.deviceState.collect {
                     if (it.bleConnectionState is BleConnectionState.Disconnected) {
@@ -111,7 +134,25 @@ abstract class AbstractBleDevice(override val disableExceptions: AtomicBoolean,
                         }
                         return@collect
                     }
-                    if (it.bleConnectionState is BleConnectionState.ServicesSupported) {
+                    if (it.bleConnectionState is BleConnectionState.ConnectionStateTimeout) {
+                        withContext(NonCancellable) {
+                            facadeImpl.close()
+                            delay(100)
+                            onBleDeviceDisconnected?.onDeviceDisconnected(this@AbstractBleDevice)
+                            job.cancel()
+                        }
+                        return@collect
+                    }
+                    if (it.bleConnectionState is BleConnectionState.ServicesDiscoveryTimeout) {
+                        withContext(NonCancellable) {
+                            facadeImpl.close()
+                            delay(100)
+                            onBleDeviceDisconnected?.onDeviceDisconnected(this@AbstractBleDevice)
+                            job.cancel()
+                        }
+                        return@collect
+                    }
+                    if (it.bleConnectionState is BleConnectionState.ServicesDiscovered) {
                         //------------------------------------------------------------------------------
                         // Subscribing what should be subscribed
                         //------------------------------------------------------------------------------

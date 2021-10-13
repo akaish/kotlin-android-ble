@@ -38,15 +38,79 @@ import net.akaish.kab.model.BleConnection
 import net.akaish.kab.model.TargetCharacteristic
 import net.akaish.kab.result.*
 import net.akaish.kab.utility.ILogger
-import java.util.*
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 
 @ExperimentalCoroutinesApi
 interface IGattFacade {
 
+    companion object {
+        const val SERVICE_DISCOVERY_TIMEOUT_DEFAULTS = 45_000L
+        const val CONNECTING_STATE_TIMEOUT_DEFAULTS = 45_000L
+        const val CONNECTED_STATE_TIMEOUT_DEFAULTS = 4000L
+        const val DISCONNECTED_STATE_TIMEOUT_DEFAULTS = 4000L
+
+        const val DISCONNECT_STATE_DELAY_DEFAULTS = 1000L
+        const val SERVICE_DISCOVERY_DELAY_DEFAULTS = 600L
+    }
+
+    /*
+     * Timeouts
+     */
+    /**
+     * Service timeout discovery timeout: after device connection gatt.discoverServices would be called,
+     * if onServicesDiscovered would not be invoked before timeout, connection state would be changed to
+     * [net.akaish.kab.model.BleConnectionState.ServicesDiscoveryTimeout]
+     * Default value in library implementation would be [SERVICE_DISCOVERY_TIMEOUT_DEFAULTS],
+     * if value is null then no timeout would be used.
+     *
+     */
+    val serviceDiscoveryTimeout: Long?
+
+    /**
+     * Connecting timeout: after gatt.connect method would be called if connecting value callback would
+     * not be called within timeout, connection state would be changed to
+     * [net.akaish.kab.model.BleConnectionState.ConnectionStateTimeout]
+     * Default value in library implementation would be [CONNECTING_STATE_TIMEOUT_DEFAULTS],
+     * if value is null then no timeout would be used.
+     */
+    val connectingTimeout: Long?
+
+    /**
+     * Connected timeout: after state connecting received method would be called if connected callback would
+     * not be called within timeout, connection state would be changed to
+     * [net.akaish.kab.model.BleConnectionState.ConnectionStateTimeout]
+     * Default value in library implementation would be [CONNECTED_STATE_TIMEOUT_DEFAULTS],
+     * if value is null then no timeout would be used.
+     */
+    val connectedTimeout: Long?
+
+    /**
+     * Disconnected timeout: after disconnected method invoked if connected callback would
+     * not be called within timeout, connection state would be changed to
+     * [net.akaish.kab.model.BleConnectionState.DisconnectedStateTimeout]
+     * Default value in library implementation would be [DISCONNECTED_STATE_TIMEOUT_DEFAULTS],
+     * if value is null then no timeout would be used.
+     * NOT USED RIGHT NOW
+     */
+    val disconnectedTimeout: Long?
+
+    /**
+     * Delay in ms to change connection state to [net.akaish.kab.model.BleConnectionState.Disconnected]
+     * after [BluetoothGatt.STATE_DISCONNECTED] callback received
+     */
+    val disconnectedEventDelay: Long?
+
+    /**
+     * Delay in ms to start gatt.discoverServices after [BluetoothGatt.STATE_CONNECTED] callback received
+     */
+    val serviceDiscoveryStartTimeout: Long?
+
     val device: BluetoothDevice
 
+    /**
+     * Connects ble device
+     */
     fun connect(context: Context, autoConnection: Boolean, transport: Int)
 
     fun disconnect()
@@ -54,6 +118,12 @@ interface IGattFacade {
     fun close()
 
     fun getGatt() : BluetoothGatt?
+
+    /**
+     * Amount of retries for accessing gatt operations (not connection state operations)
+     * Only gatt busy retries, default value : 1
+     */
+    val retryGattOperationsTime: Int
 
     /**
      * When true, no exceptions would be raised, all errors would be returned as results
@@ -80,7 +150,7 @@ interface IGattFacade {
     /**
      * MTU state flow
      */
-    val mtu : StateFlow<Int>
+    val mtuFlow : StateFlow<Int>
 
     /**
      * Device state
