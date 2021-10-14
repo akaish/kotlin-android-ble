@@ -27,6 +27,7 @@ import android.bluetooth.BluetoothDevice
 import android.bluetooth.BluetoothManager
 import android.bluetooth.BluetoothProfile.GATT
 import android.content.Context
+import android.util.Log
 import androidx.annotation.IntRange
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.collect
@@ -114,93 +115,107 @@ abstract class AbstractBleDevice(override val disableExceptions: AtomicBoolean,
                     disconnectedEventDelay = disconnectedEventDelay,
                     serviceDiscoveryStartTimeout = serviceDiscoveryDelay,
                     retryGattOperationsTime = retryGattOperationsTime)
-                facadeImpl.connect(context, false, transport)
-                facadeImpl.deviceState.collect {
-                    if (it.bleConnectionState is BleConnectionState.Disconnected) {
-                        withContext(NonCancellable) {
-                            facadeImpl.close()
-                            delay(200)
-                            onBleDeviceDisconnected?.onDeviceDisconnected(this@AbstractBleDevice)
-                            job.cancel()
+                scope.launch(coroutineContext) {
+                    facadeImpl.deviceState.collect {
+                        if (it.bleConnectionState is BleConnectionState.Disconnected) {
+                            withContext(NonCancellable) {
+                                facadeImpl.close()
+                                delay(200)
+                                onBleDeviceDisconnected?.onDeviceDisconnected(this@AbstractBleDevice)
+                                job.cancel()
+                            }
+                            return@collect
                         }
-                        return@collect
-                    }
-                    if (it.bleConnectionState is BleConnectionState.ConnectionStateError) {
-                        withContext(NonCancellable) {
-                            facadeImpl.close()
-                            delay(200)
-                            onBleDeviceDisconnected?.onDeviceDisconnected(this@AbstractBleDevice)
-                            job.cancel()
+                        if (it.bleConnectionState is BleConnectionState.ConnectionStateError) {
+                            withContext(NonCancellable) {
+                                facadeImpl.close()
+                                delay(200)
+                                onBleDeviceDisconnected?.onDeviceDisconnected(this@AbstractBleDevice)
+                                job.cancel()
+                            }
+                            return@collect
                         }
-                        return@collect
-                    }
-                    if (it.bleConnectionState is BleConnectionState.ConnectionStateTimeout) {
-                        withContext(NonCancellable) {
-                            facadeImpl.close()
-                            delay(100)
-                            onBleDeviceDisconnected?.onDeviceDisconnected(this@AbstractBleDevice)
-                            job.cancel()
+                        if (it.bleConnectionState is BleConnectionState.ConnectionStateTimeout) {
+                            withContext(NonCancellable) {
+                                facadeImpl.close()
+                                delay(100)
+                                onBleDeviceDisconnected?.onDeviceDisconnected(this@AbstractBleDevice)
+                                job.cancel()
+                            }
+                            return@collect
                         }
-                        return@collect
-                    }
-                    if (it.bleConnectionState is BleConnectionState.ServicesDiscoveryTimeout) {
-                        withContext(NonCancellable) {
-                            facadeImpl.close()
-                            delay(100)
-                            onBleDeviceDisconnected?.onDeviceDisconnected(this@AbstractBleDevice)
-                            job.cancel()
+                        if (it.bleConnectionState is BleConnectionState.ServicesDiscoveryTimeout) {
+                            withContext(NonCancellable) {
+                                facadeImpl.close()
+                                delay(100)
+                                onBleDeviceDisconnected?.onDeviceDisconnected(this@AbstractBleDevice)
+                                job.cancel()
+                            }
+                            return@collect
                         }
-                        return@collect
-                    }
-                    if (it.bleConnectionState is BleConnectionState.ServicesDiscovered) {
-                        //------------------------------------------------------------------------------
-                        // Subscribing what should be subscribed
-                        //------------------------------------------------------------------------------
-                        if (autoSubscription) {
-                            applicationCharacteristics.forEach { service ->
-                                if (service.serviceTypes.contains(ServiceType.Notify)) {
-                                    l?.d("Subscribing to [${service.id}] ${service.characteristic}...")
-                                    when(val result = facadeImpl.subscribe(service.id, SUBSCRIPTION_TIMEOUT, TimeUnit.MILLISECONDS)) {
-                                        is SubscriptionResult.SubscriptionSuccess -> l?.i(result.toString())
-                                        is SubscriptionResult.OperationException -> l?.e(result.toString(), result.origin)
-                                        else -> l?.e(result.toString())
+                        if (it.bleConnectionState is BleConnectionState.ServicesDiscovered) {
+                            //------------------------------------------------------------------------------
+                            // Subscribing what should be subscribed
+                            // ------------------------------------------------------------------------------
+                                Log.e("1111111111", "111111111111111111")
+                            if (autoSubscription) {
+                                applicationCharacteristics.forEach { service ->
+                                    if (service.serviceTypes.contains(ServiceType.Notify)) {
+                                        l?.d("Subscribing to [${service.id}] ${service.characteristic}...")
+                                        when(val result = facadeImpl.subscribe(service.id, SUBSCRIPTION_TIMEOUT, TimeUnit.MILLISECONDS)) {
+                                            is SubscriptionResult.SubscriptionSuccess -> l?.i(result.toString())
+                                            else -> {
+                                                when(result) {
+                                                    is SubscriptionResult.OperationException -> l?.e(result.toString(), result.origin)
+                                                    else -> l?.e(result.toString())
+                                                }
+                                                withContext(NonCancellable) {
+                                                    facadeImpl.close()
+                                                    delay(200)
+                                                    onBleDeviceDisconnected?.onDeviceDisconnected(this@AbstractBleDevice)
+                                                    job.cancel()
+                                                }
+                                                return@collect
+                                            }
+                                        }
                                     }
                                 }
                             }
-                        }
-                        //------------------------------------------------------------------------------
-                        // Setting RSSI update period if necessary
-                        //------------------------------------------------------------------------------
-                        rssiUpdatePeriod?.let { updatePeriod ->
-                            val period = if (updatePeriod > MIN_RSSI_UPDATE_PERIOD) {
-                                updatePeriod
-                            } else {
-                                l?.e("Defined RSSI update period is too short ($updatePeriod), setting min value instead ($MIN_RSSI_UPDATE_PERIOD)")
-                                MIN_RSSI_UPDATE_PERIOD
-                            }
-                            launch {
-                                l?.d("Starting RSSI request loop with $period ms delay between iterations...")
-                                while (true) {
-                                    facadeImpl.readRemoteRSSI(RSSI_TIMEOUT, TimeUnit.MILLISECONDS)
-                                    delay(period)
+                            //------------------------------------------------------------------------------
+                            // Setting RSSI update period if necessary
+                            //------------------------------------------------------------------------------
+                            rssiUpdatePeriod?.let { updatePeriod ->
+                                val period = if (updatePeriod > MIN_RSSI_UPDATE_PERIOD) {
+                                    updatePeriod
+                                } else {
+                                    l?.e("Defined RSSI update period is too short ($updatePeriod), setting min value instead ($MIN_RSSI_UPDATE_PERIOD)")
+                                    MIN_RSSI_UPDATE_PERIOD
+                                }
+                                launch {
+                                    l?.d("Starting RSSI request loop with $period ms delay between iterations...")
+                                    while (true) {
+                                        facadeImpl.readRemoteRSSI(RSSI_TIMEOUT, TimeUnit.MILLISECONDS)
+                                        delay(period)
+                                    }
                                 }
                             }
-                        }
-                        //------------------------------------------------------------------------------
-                        // Firing MTU request if necessary
-                        //------------------------------------------------------------------------------
-                        desiredMTU?.let { mtu ->
-                            l?.d("Requesting MTU (target value $mtu)...")
-                            when(val mtuResult = facadeImpl.requestMTU(mtu, MTU_TIMEOUT, TimeUnit.MILLISECONDS)) {
-                                is MTUSuccess -> l?.i(mtuResult.toString())
-                                is MTUResult.OperationException -> l?.e(mtuResult.toString(), mtuResult.origin)
-                                else -> l?.e(mtuResult.toString())
+                            //------------------------------------------------------------------------------
+                            // Firing MTU request if necessary
+                            //------------------------------------------------------------------------------
+                            desiredMTU?.let { mtu ->
+                                l?.d("Requesting MTU (target value $mtu)...")
+                                when(val mtuResult = facadeImpl.requestMTU(mtu, MTU_TIMEOUT, TimeUnit.MILLISECONDS)) {
+                                    is MTUSuccess -> l?.i(mtuResult.toString())
+                                    is MTUResult.OperationException -> l?.e(mtuResult.toString(), mtuResult.origin)
+                                    else -> l?.e(mtuResult.toString())
+                                }
                             }
+                            onReady()
+                            facadeImpl.onReady()
                         }
-                        onReady()
-                        facadeImpl.onReady()
                     }
                 }
+                facadeImpl.connect(context, false, transport)
             } catch (tr: Throwable) {
                 tr.printStackTrace()
             }

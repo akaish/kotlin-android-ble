@@ -29,6 +29,7 @@ import android.os.Build
 import android.os.Handler
 import android.os.HandlerThread
 import android.os.Looper
+import android.util.Log
 import androidx.annotation.IntRange
 import androidx.annotation.RequiresApi
 import kotlinx.coroutines.*
@@ -55,6 +56,7 @@ import net.akaish.kab.model.BleConnectionState.Companion.B_STATE_DISCONNECTING
 import net.akaish.kab.model.BleConnectionState.Companion.B_STATE_SERVICES_DISCOVERY_ERROR
 import net.akaish.kab.result.*
 import net.akaish.kab.utility.ConnectDisconnectCounter
+import net.akaish.kab.utility.GattCode
 import net.akaish.kab.utility.GattCode.GATT_SUCCESS
 import net.akaish.kab.utility.Hex
 import net.akaish.kab.utility.ILogger
@@ -122,7 +124,7 @@ class GattFacadeImpl(override val device: BluetoothDevice,
                                 context,
                                 false,
                                 this.bluetoothGattCallback
-                        ) // TRANSPORT_AUTO =\
+                        )
                     }
                 }
                 ConnectDisconnectCounter.connection(uuid)
@@ -225,13 +227,31 @@ class GattFacadeImpl(override val device: BluetoothDevice,
     override val notificationChannel = BroadcastChannel<Pair<BluetoothGattCharacteristic, ByteArray>>(1)
 
     override suspend fun subscribe(target: Long, timeout: Long, timeUnit: TimeUnit) : SubscriptionResult {
-        val result = subscribe(characteristics[target.toString()]!!, timeout, timeUnit)
+        val result = try {
+            subscribe(characteristics[target.toString()]!!, timeout, timeUnit)
+        } catch (tr: Throwable) {
+            SubscriptionResult.OperationException(tr)
+        }
+        if(result !is SubscriptionResult.SubscriptionSuccess) {
+            val previous = deviceState.value.bleConnectionState
+            val newState = BleConnectionState.ConnectionStateError(previous.stateId, GattCode.GATT_ERROR)
+            deviceState.value = deviceState.value.copy(bleConnectionState = newState)
+        }
         result.throwException(disableExceptions.get())
         return result
     }
 
     override suspend fun subscribe(target: TargetCharacteristic, timeout: Long, timeUnit: TimeUnit) : SubscriptionResult {
-        val result = subscribe(characteristics[target.toString()]!!, timeout, timeUnit)
+        val result = try {
+            subscribe(characteristics[target.toString()]!!, timeout, timeUnit)
+        } catch (tr: Throwable) {
+            SubscriptionResult.OperationException(tr)
+        }
+        if(result !is SubscriptionResult.SubscriptionSuccess) {
+            val previous = deviceState.value.bleConnectionState
+            val newState = BleConnectionState.ConnectionStateError(previous.stateId, GattCode.GATT_ERROR)
+            deviceState.value = deviceState.value.copy(bleConnectionState = newState)
+        }
         result.throwException(disableExceptions.get())
         return result
     }
@@ -753,19 +773,22 @@ class GattFacadeImpl(override val device: BluetoothDevice,
         }
 
         override fun onServicesDiscovered(gatt: BluetoothGatt, status: Int) {
+            Log.e("ee", "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAa")
             disposeTimer()
-            deviceState.value.let { previous ->
-                if(status != GATT_SUCCESS) {
-                    l?.e("${deviceTag()} : FAILED TO DISCOVER SERVICES : STATUS CODE = $status")
-                    deviceState.value = previous.copy(bleConnectionState = BleConnectionState.ServicesDiscoveryError())
-                    close()
-                    return
-                }
+            bgThreadHandler.post {
+                deviceState.value.let { previous ->
+                    if(status != GATT_SUCCESS) {
+                        l?.e("${deviceTag()} : FAILED TO DISCOVER SERVICES : STATUS CODE = $status")
+                        deviceState.value = previous.copy(bleConnectionState = BleConnectionState.ServicesDiscoveryError())
+                        close()
+                        return@post
+                    }
 
-                if(applicationServices.isEmpty()) {
-                    registerAllServices(gatt, previous)
-                } else {
-                    registerRequiredServices(gatt, previous)
+                    if(applicationServices.isEmpty()) {
+                        registerAllServices(gatt, previous)
+                    } else {
+                        registerRequiredServices(gatt, previous)
+                    }
                 }
             }
         }
