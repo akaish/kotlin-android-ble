@@ -157,7 +157,6 @@ abstract class AbstractBleDevice(override val disableExceptions: AtomicBoolean,
                             //------------------------------------------------------------------------------
                             // Subscribing what should be subscribed
                             // ------------------------------------------------------------------------------
-                                Log.e("1111111111", "111111111111111111")
                             if (autoSubscription) {
                                 applicationCharacteristics.forEach { service ->
                                     if (service.serviceTypes.contains(ServiceType.Notify)) {
