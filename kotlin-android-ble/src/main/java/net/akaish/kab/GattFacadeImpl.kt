@@ -223,7 +223,7 @@ class GattFacadeImpl(override val device: BluetoothDevice,
         return result
     }
 
-    override val notificationChannel = BroadcastChannel<Pair<BluetoothGattCharacteristic, ByteArray>>(1)
+    override val notificationChannel = BroadcastChannel<Pair<BluetoothGattCharacteristic, ByteArray>>(32)
 
     override suspend fun subscribe(target: Long, timeout: Long, timeUnit: TimeUnit) : SubscriptionResult {
         val result = try {
@@ -364,7 +364,7 @@ class GattFacadeImpl(override val device: BluetoothDevice,
 
     private suspend fun subscribe(characteristic: BluetoothGattCharacteristic, timeoutMs: Long)
             : SubscriptionResult = suspendCancellableCoroutine { continuation ->
-        bgThreadHandler.post {
+        mainThreadHandler.post {
             var tryCounter = 0
             while (tryCounter != retryGattOperationsTime) {
                 tryCounter++
@@ -498,7 +498,7 @@ class GattFacadeImpl(override val device: BluetoothDevice,
 
     private suspend fun read(target: BluetoothGattCharacteristic, timeoutMs: Long)
             : ReadResult = suspendCancellableCoroutine { continuation ->
-        bgThreadHandler.post {
+        mainThreadHandler.post {
             try {
                 val callback = object : OnCharacteristicRead {
                     override fun onCharacteristicRead(gatt: BluetoothGatt, characteristic: BluetoothGattCharacteristic, status: Int) {
@@ -578,7 +578,7 @@ class GattFacadeImpl(override val device: BluetoothDevice,
 
     private suspend fun write(target: BluetoothGattCharacteristic, bytes: ByteArray, timeoutMs: Long)
             : WriteResult = suspendCancellableCoroutine { continuation ->
-        bgThreadHandler.post {
+        mainThreadHandler.post {
             try {
                 val writeCallback = object : OnCharacteristicWrite {
                     override fun onCharacteristicWrite(gatt: BluetoothGatt, characteristic: BluetoothGattCharacteristic, status: Int) {
@@ -856,11 +856,13 @@ class GattFacadeImpl(override val device: BluetoothDevice,
 
         // If it should be added other descriptor writes, this callback should be redesigned
         override fun onDescriptorWrite(gatt: BluetoothGatt, descriptor: BluetoothGattDescriptor, status: Int) {
+            super.onDescriptorWrite(gatt, descriptor, status)
             l?.i("${deviceTag()} descriptor write callback invoked")
             subscriptionCallback?.onDescriptorWrite(gatt, descriptor, status)
         }
 
         override fun onCharacteristicWrite(gatt: BluetoothGatt, characteristic: BluetoothGattCharacteristic, status: Int) {
+            super.onCharacteristicWrite(gatt, characteristic, status)
             l?.d("${deviceTag()} onCharacteristicWrite callback : ${characteristic.uuid} : status code = $status")
             callbacks[characteristic]?.let {
                 if(it is OnCharacteristicWrite)
@@ -869,6 +871,7 @@ class GattFacadeImpl(override val device: BluetoothDevice,
         }
 
         override fun onCharacteristicRead(gatt: BluetoothGatt, characteristic: BluetoothGattCharacteristic, status: Int) {
+            super.onCharacteristicRead(gatt, characteristic, status)
             l?.d("${deviceTag()} onCharacteristicRead callback : ${characteristic.uuid} : status code = $status")
             callbacks[characteristic]?.let {
                 if(it is OnCharacteristicRead) {
@@ -882,9 +885,11 @@ class GattFacadeImpl(override val device: BluetoothDevice,
             onReadRSSICallback?.onReadRemoteRssi(gatt, rssi, status)
         }
 
-        override fun onCharacteristicChanged(gatt: BluetoothGatt, characteristic: BluetoothGattCharacteristic) {
+        @Synchronized override fun onCharacteristicChanged(gatt: BluetoothGatt, characteristic: BluetoothGattCharacteristic) {
+            super.onCharacteristicChanged(gatt, characteristic)
             val value = if(characteristic.value == null) byteArrayOf() else characteristic.value
-            l?.d("${deviceTag()} received notification from ${characteristic.uuid} : [${value.size}] ${Hex.toPrettyHexString(value)}")
+            l?.i("${deviceTag()} received notification from ${characteristic.uuid} : [${value.size}] ${Hex.toPrettyHexString(value)}")
+            l?.e("I AM OM ${Thread.currentThread().name}")
             notificationChannel.sendBlocking(Pair(characteristic, value))
         }
 
