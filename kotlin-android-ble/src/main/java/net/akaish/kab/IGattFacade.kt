@@ -120,6 +120,16 @@ interface IGattFacade {
     fun getGatt() : BluetoothGatt?
 
     /**
+     * Use custom handler for gatt connection for defined API level.
+     * If null, no custom handler would be used.
+     * See [BluetoothDevice.connectGatt] with parameter [android.os.Handler]
+     * Uses custom handler for Binder threads used for passing callbacks from hw to app code.
+     * Documentation claims that custom handler solves some race condition related issues on Android O and higher,
+     * however on some devices like Sony Xperia XA1 Plus it leads to some errors.
+     */
+    val useCustomHandlerSinceApi: Int?
+
+    /**
      * Amount of retries for accessing gatt operations (not connection state operations)
      * Only gatt busy retries, default value : 1
      */

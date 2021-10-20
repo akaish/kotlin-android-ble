@@ -72,7 +72,8 @@ abstract class AbstractBleDevice(override val disableExceptions: AtomicBoolean,
                                  override val disconnectedEventDelay: Long? = DISCONNECT_STATE_DELAY_DEFAULTS,
                                  override val serviceDiscoveryDelay: Long? = SERVICE_DISCOVERY_DELAY_DEFAULTS,
                                  @IntRange(from = 1, to = Int.MAX_VALUE.toLong())
-                                 override val retryGattOperationsTime: Int = 1) : IBleScopedDevice {
+                                 override val retryGattOperationsTime: Int = 1,
+                                 override val useCustomHandlerSinceApi: Int? = null) : IBleScopedDevice {
 
     /**
      * Instance of GattCallback instance where all magic of flattening callbacks into raw coroutine

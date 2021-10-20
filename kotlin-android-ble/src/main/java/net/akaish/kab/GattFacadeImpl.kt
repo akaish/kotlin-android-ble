@@ -82,7 +82,8 @@ class GattFacadeImpl(override val device: BluetoothDevice,
                      override val disconnectedEventDelay: Long? = DISCONNECT_STATE_DELAY_DEFAULTS,
                      override val serviceDiscoveryStartTimeout: Long? = SERVICE_DISCOVERY_DELAY_DEFAULTS,
                      @IntRange(from = 1, to = Int.MAX_VALUE.toLong())
-                     override val retryGattOperationsTime: Int = 1) : IGattFacade {
+                     override val retryGattOperationsTime: Int = 1,
+                     override val useCustomHandlerSinceApi: Int? = null) : IGattFacade {
 
     private lateinit var gatt: BluetoothGatt
     private val mainThreadHandler = Handler(Looper.getMainLooper())
@@ -106,14 +107,32 @@ class GattFacadeImpl(override val device: BluetoothDevice,
             mainThreadHandler.post {
                 gatt = when {
                     Build.VERSION.SDK_INT >= Build.VERSION_CODES.O -> {
-                        device.connectGatt(
+                        if(useCustomHandlerSinceApi == null) {
+                            device.connectGatt(
                                 context,
                                 false,
                                 this.bluetoothGattCallback,
                                 transport,
-                                phyLe,
-                                mainThreadHandler
-                        )
+                                phyLe)
+                        } else {
+                            require(useCustomHandlerSinceApi >= Build.VERSION_CODES.O)
+                            if(Build.VERSION.SDK_INT >= useCustomHandlerSinceApi) {
+                                device.connectGatt(
+                                    context,
+                                    false,
+                                    this.bluetoothGattCallback,
+                                    transport,
+                                    phyLe,
+                                    mainThreadHandler)
+                            } else {
+                                device.connectGatt(
+                                    context,
+                                    false,
+                                    this.bluetoothGattCallback,
+                                    transport,
+                                    phyLe)
+                            }
+                        }
                     }
                     Build.VERSION.SDK_INT >= Build.VERSION_CODES.M -> {
                         device.connectGatt(context, false, this.bluetoothGattCallback, transport)
@@ -297,7 +316,7 @@ class GattFacadeImpl(override val device: BluetoothDevice,
 
     private suspend fun readRemoteRSSI(timeoutMs: Long)
         : RSSIResult = suspendCancellableCoroutine { continuation ->
-        bgThreadHandler.post {
+        bgThreadHandler.post bg@ {
             try {
                 // For some reason using SAM on OnReadRemoteRSSI fun iface cause exception
                 onReadRSSICallback = object : OnReadRemoteRSSI {
@@ -313,32 +332,25 @@ class GattFacadeImpl(override val device: BluetoothDevice,
                     }
 
                 }
-                var tryCounter = 0
-                while (tryCounter != retryGattOperationsTime) {
-                    tryCounter++
+                mainThreadHandler.post {
                     if (!gatt.readRemoteRssi()) {
-                        if(tryCounter == retryGattOperationsTime) {
-                            onReadRSSICallback = null
-                            l?.e("${deviceTag()} FAILED TO READ RSSI: DEVICE IS BUSY")
-                            continuation.resume(RSSIResult.DeviceIsBusy)
-                            return@post
-                        } else {
-                            l?.w("${deviceTag()} FAILED TO READ RSSI: DEVICE IS BUSY, NEXT TRY")
-                            Thread.sleep(5)
-                        }
-                    } else break
+                        onReadRSSICallback = null
+                        l?.e("${deviceTag()} FAILED TO READ RSSI: DEVICE IS BUSY")
+                        continuation.resume(RSSIResult.DeviceIsBusy)
+                        return@post
+                    }
                 }
             } catch (tr: Throwable) {
                 onReadRSSICallback = null
                 if (tr is TimeoutCancellationException) {
                     l?.e("${deviceTag()} FAILED TO READ RSSI: OPERATION TIMEOUT $timeoutMs")
                     continuation.resume(RSSIResult.OperationTimeout(timeoutMs))
-                    return@post
+                    return@bg
                 } else {
                     l?.e("${deviceTag()} FAILED TO READ RSSI: OPERATION EXCEPTION", tr)
                     continuation.resume(RSSIResult.OperationException(tr))
                     tr.printStackTrace()
-                    return@post
+                    return@bg
                 }
             }
         }
@@ -375,7 +387,7 @@ class GattFacadeImpl(override val device: BluetoothDevice,
                         return@post
                     } else {
                         l?.w("${deviceTag()} FAILED TO SET SUBSCRIPTION FLAG TO ${characteristic.uuid}, NEXT TRY!")
-                        Thread.sleep(5)
+                        Thread.sleep(3)
                     }
                 } else break
             }
@@ -427,7 +439,7 @@ class GattFacadeImpl(override val device: BluetoothDevice,
     @RequiresApi(Build.VERSION_CODES.LOLLIPOP)
     private suspend fun requestMTU(desiredMTU: Int, timeoutMs: Long)
             : MTUResult = suspendCancellableCoroutine { continuation ->
-        bgThreadHandler.post {
+        mainThreadHandler.post {
             try {
                 require(desiredMTU in MTU_MIN..MTU_MAX)
                 mtuCallback = object : OnMTUChanged {
@@ -872,7 +884,7 @@ class GattFacadeImpl(override val device: BluetoothDevice,
 
         override fun onCharacteristicRead(gatt: BluetoothGatt, characteristic: BluetoothGattCharacteristic, status: Int) {
             super.onCharacteristicRead(gatt, characteristic, status)
-            l?.d("${deviceTag()} onCharacteristicRead callback : ${characteristic.uuid} : status code = $status")
+            l?.i("${deviceTag()} onCharacteristicRead callback : ${characteristic.uuid} : status code = $status")
             callbacks[characteristic]?.let {
                 if(it is OnCharacteristicRead) {
                     it.onCharacteristicRead(gatt, characteristic, status)
@@ -889,12 +901,11 @@ class GattFacadeImpl(override val device: BluetoothDevice,
             super.onCharacteristicChanged(gatt, characteristic)
             val value = if(characteristic.value == null) byteArrayOf() else characteristic.value
             l?.i("${deviceTag()} received notification from ${characteristic.uuid} : [${value.size}] ${Hex.toPrettyHexString(value)}")
-            l?.e("I AM OM ${Thread.currentThread().name}")
             notificationChannel.sendBlocking(Pair(characteristic, value))
         }
 
         override fun onMtuChanged(gatt: BluetoothGatt, mtu: Int, status: Int) {
-            l?.d("${deviceTag()} OnMtuChanged callback : mtu = $mtu ; status code = $status")
+            l?.i("${deviceTag()} OnMtuChanged callback : mtu = $mtu ; status code = $status")
             mtuCallback?.onMTUChanged(gatt, mtu, status)
         }
     }
