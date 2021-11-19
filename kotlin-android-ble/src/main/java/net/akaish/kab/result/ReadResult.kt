@@ -42,6 +42,15 @@ sealed class ReadResult : BLEResult {
     }
 
     /**
+     * Device callback already exists
+     */
+    object OperationCallbackAlreadyExists : ReadResult() {
+        override fun toThrowable(): BleException? = BleCallbackAlreadyExistsException(toString(), this)
+
+        override fun toString() : String = "ReadResult: operation callback already exists: other gatt operation in progress (app layer)!"
+    }
+
+    /**
      * Wrapper for exception thrown during [net.akaish.kab.GattFacadeImpl.read]
      */
     class OperationException(

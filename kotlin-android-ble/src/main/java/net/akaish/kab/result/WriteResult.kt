@@ -41,6 +41,15 @@ sealed class WriteResult : BLEResult {
     }
 
     /**
+     * Device callback already exists
+     */
+    object OperationCallbackAlreadyExists : WriteResult() {
+        override fun toThrowable(): BleException? = BleCallbackAlreadyExistsException(toString(), this)
+
+        override fun toString() : String = "WriteResult: operation callback already exists: other gatt operation in progress (app layer)!"
+    }
+
+    /**
      * Write error while executing [net.akaish.kab.GattFacadeImpl.write]
      */
     class WriteError(

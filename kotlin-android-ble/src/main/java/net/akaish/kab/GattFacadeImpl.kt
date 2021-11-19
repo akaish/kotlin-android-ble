@@ -536,8 +536,8 @@ class GattFacadeImpl(override val device: BluetoothDevice,
                     }
                 }
                 callbacks[target]?.let {
-                    l?.e("${deviceTag()} READ ERROR : DEVICE IS BUSY; CHAR ${target.uuid}")
-                    continuation.resume(ReadResult.DeviceIsBusy)
+                    l?.e("${deviceTag()} READ ERROR : DEVICE IS BUSY (APP LAYER); CHAR ${target.uuid}")
+                    continuation.resume(ReadResult.OperationCallbackAlreadyExists)
                     return@post
                 }
                 callbacks[target] = callback
@@ -610,7 +610,7 @@ class GattFacadeImpl(override val device: BluetoothDevice,
                     }
                 }
                 callbacks[target]?.let {
-                    continuation.resume(WriteResult.DeviceIsBusy)
+                    continuation.resume(WriteResult.OperationCallbackAlreadyExists)
                     return@post
                 }
                 callbacks[target] = writeCallback
