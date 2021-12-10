@@ -54,11 +54,9 @@ import net.akaish.kab.model.BleConnectionState.Companion.B_STATE_DISCONNECTED
 import net.akaish.kab.model.BleConnectionState.Companion.B_STATE_DISCONNECTING
 import net.akaish.kab.model.BleConnectionState.Companion.B_STATE_SERVICES_DISCOVERY_ERROR
 import net.akaish.kab.result.*
+import net.akaish.kab.utility.*
 import net.akaish.kab.utility.ConnectDisconnectCounter
-import net.akaish.kab.utility.GattCode
 import net.akaish.kab.utility.GattCode.GATT_SUCCESS
-import net.akaish.kab.utility.Hex
-import net.akaish.kab.utility.ILogger
 import java.util.*
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.TimeUnit
@@ -86,6 +84,7 @@ class GattFacadeImpl(override val device: BluetoothDevice,
                      override val useCustomHandlerSinceApi: Int? = null) : IGattFacade {
 
     private lateinit var gatt: BluetoothGatt
+    private lateinit var gattWrapper: BluetoothGattDebugWrapper
     private val mainThreadHandler = Handler(Looper.getMainLooper())
     private val bgThread = HandlerThread("GattFacadeImpl").apply { start() }
     private val bgThreadHandler = Handler(bgThread.looper)
@@ -145,6 +144,7 @@ class GattFacadeImpl(override val device: BluetoothDevice,
                         )
                     }
                 }
+                gattWrapper = BluetoothGattDebugWrapper(gatt)
                 ConnectDisconnectCounter.connection(uuid)
             }
         }
@@ -541,21 +541,38 @@ class GattFacadeImpl(override val device: BluetoothDevice,
                     return@post
                 }
                 callbacks[target] = callback
-                var tryCounter = 0
-                while (tryCounter != retryGattOperationsTime) {
-                    tryCounter++
-                    if (!gatt.readCharacteristic(target)) {
-                        if(tryCounter == retryGattOperationsTime) {
-                            callbacks.remove(target)
-                            l?.e("${deviceTag()} READ ERROR : DEVICE IS BUSY; CHAR ${target.uuid}")
-                            continuation.resume(ReadResult.DeviceIsBusy)
-                            return@post
-                        } else {
-                            l?.w("${deviceTag()} READ ERROR : DEVICE IS BUSY; CHAR ${target.uuid}, NEXT TRY")
-                            Thread.sleep(5)
-                        }
-                    } else break
+//                var tryCounter = 0
+
+                val readInitializationResult = try {
+                    gattWrapper.readCharacteristic(target)
+                } catch (tr: Throwable) {
+                    callbacks.remove(target)
+                    l?.e("${deviceTag()} READ ERROR : READ INITIALIZATION ERROR C = 0; CHAR ${target.uuid}", tr)
+                    continuation.resume(ReadResult.ReadInitiateFailure(0, tr))
+                    return@post
                 }
+
+                if(readInitializationResult != 1) {
+                    callbacks.remove(target)
+                    l?.e("${deviceTag()} READ ERROR : READ INITIALIZATION ERROR C = $readInitializationResult; CHAR ${target.uuid}")
+                    continuation.resume(ReadResult.ReadInitiateFailure(readInitializationResult, null))
+                    return@post
+                }
+
+//                while (tryCounter != retryGattOperationsTime) {
+//                    tryCounter++
+//                    if (!gatt.readCharacteristic(target)) {
+//                        if(tryCounter == retryGattOperationsTime) {
+//                            callbacks.remove(target)
+//                            l?.e("${deviceTag()} READ ERROR : DEVICE IS BUSY; CHAR ${target.uuid}")
+//                            continuation.resume(ReadResult.DeviceIsBusy)
+//                            return@post
+//                        } else {
+//                            l?.w("${deviceTag()} READ ERROR : DEVICE IS BUSY; CHAR ${target.uuid}, NEXT TRY")
+//                            Thread.sleep(5)
+//                        }
+//                    } else break
+//                }
             } catch (tr: Throwable) {
                 callbacks.remove(target)
                 if (tr is TimeoutCancellationException) {
