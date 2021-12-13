@@ -29,6 +29,11 @@ import android.bluetooth.BluetoothGattCharacteristic
 import android.os.RemoteException
 import android.util.Log
 
+/**
+ * Gatt wrapper that does same things as [BluetoothGatt] via reflection but returns more helpful errors on fail.
+ * Requires something like [https://github.com/ChickenHook/RestrictionBypass](https://github.com/ChickenHook/RestrictionBypass)
+ * or free reflection library.
+ */
 class BluetoothGattDebugWrapper(val gatt: BluetoothGatt) {
 
     companion object {
@@ -68,59 +73,29 @@ class BluetoothGattDebugWrapper(val gatt: BluetoothGatt) {
 
             val service = characteristic.service ?: return -4
 
-            if(gatt.device == null) {
-                return -5
-            }
-            // blacklisted access
-//            val getDeviceMethod = service::class.java.getDeclaredMethod("getDevice")
-//            val deviceReference = getDeviceMethod.invoke(service) ?: return -5
-//            2021-12-10 08:31:14.097 8198-8198/ru.ikey.express E/BGDW: readCharacteristic : throwable caught
-//            java.lang.NoSuchMethodException: android.bluetooth.BluetoothGattService.getDevice []
-//            at java.lang.Class.getMethod(Class.java:2072)
-//            at java.lang.Class.getDeclaredMethod(Class.java:2050)
-//            at net.akaish.kab.utility.BluetoothGattDebugWrapper.readCharacteristic(BluetoothGattDebugWrapper.kt:71)
-//            at net.akaish.kab.GattFacadeImpl$read$$inlined$suspendCancellableCoroutine$lambda$1.run(GattFacadeImpl.kt:547)
-//            at android.os.Handler.handleCallback(Handler.java:938)
-//            at android.os.Handler.dispatchMessage(Handler.java:99)
-//            at android.os.Looper.loop(Looper.java:263)
-//            at android.app.ActivityThread.main(ActivityThread.java:8283)
-//            at java.lang.reflect.Method.invoke(Native Method)
-//            at com.android.internal.os.RuntimeInit$MethodAndArgsCaller.run(RuntimeInit.java:612)
-//            at com.android.internal.os.ZygoteInit.main(ZygoteInit.java:1006)
+            /*
+             * It just not working
+             */
+            //val getDeviceMethod = service::class.java.getDeclaredMethod("getDevice")
+            //val deviceReference = getDeviceMethod.invoke(service) ?: return -5
+
+            val deviceReference = gatt.device ?: return -5
 
 
-            // For android 11 it is blacklisted for reflection access
-
-//            val mDeviceBusyLockField =
-//                BluetoothGatt::class.java.getDeclaredField("mDeviceBusyLock").apply {
-//                    isAccessible = true
-//                }
-            //val mDeviceLockReference = mDeviceBusyLockField.get(gatt) ?: return -6
-            //so sync on this reference is unavailable
-            //see https://dl.google.com/developers/android/rvc/non-sdk/hiddenapi-flags.csv line 34416
-
+            val mDeviceBusyLockField =
+                BluetoothGatt::class.java.getDeclaredField("mDeviceBusyLock").apply {
+                    isAccessible = true
+                }
+            val mDeviceLockReference = mDeviceBusyLockField.get(gatt) ?: return -6
             val mDeviceBusyField = BluetoothGatt::class.java.getDeclaredField("mDeviceBusy").apply {
                 isAccessible = true
             }
 
-            //synchronized(mDeviceLockReference) {
-            Log.e("111111", "${mDeviceBusyField.get(gatt).javaClass.simpleName}")
-
-//            java.lang.IllegalArgumentException: Not a primitive field: java.lang.Boolean android.bluetooth.BluetoothGatt.mDeviceBusy
-//            at java.lang.reflect.Field.getBoolean(Native Method)
-//            at net.akaish.kab.utility.BluetoothGattDebugWrapper.readCharacteristic(BluetoothGattDebugWrapper.kt:107)
-//            at net.akaish.kab.GattFacadeImpl$read$$inlined$suspendCancellableCoroutine$lambda$1.run(GattFacadeImpl.kt:547)
-//            at android.os.Handler.handleCallback(Handler.java:938)
-//            at android.os.Handler.dispatchMessage(Handler.java:99)
-//            at android.os.Looper.loop(Looper.java:263)
-//            at android.app.ActivityThread.main(ActivityThread.java:8283)
-//            at java.lang.reflect.Method.invoke(Native Method)
-//            at com.android.internal.os.RuntimeInit$MethodAndArgsCaller.run(RuntimeInit.java:612)
-//            at com.android.internal.os.ZygoteInit.main(ZygoteInit.java:1006)
-            val mDeviceBusyValue = mDeviceBusyField.get(gatt)
-            if (mDeviceBusyValue as Boolean) return -7
-            mDeviceBusyField.set(gatt, true)
-            //}
+            synchronized(mDeviceLockReference) {
+                val mDeviceBusyValue = mDeviceBusyField.get(gatt)
+                if (mDeviceBusyValue as Boolean) return -7
+                mDeviceBusyField.set(gatt, true)
+            }
 
             try {
                 val mServiceReadCharacteristicMethod =
@@ -136,7 +111,7 @@ class BluetoothGattDebugWrapper(val gatt: BluetoothGatt) {
                 mServiceReadCharacteristicMethod.invoke(
                     mServiceFieldReference,
                     mClientIfValue,
-                    gatt.device.address,
+                    (deviceReference as BluetoothDevice).address,
                     characteristic.instanceId,
                     AUTHENTICATION_NONE
                 )
@@ -152,4 +127,96 @@ class BluetoothGattDebugWrapper(val gatt: BluetoothGatt) {
             return -9
         }
     }
+
+    /**
+     * Writes a given characteristic and its values to the associated remote device.
+     * This method runs all routine of [BluetoothGatt.writeCharacteristic] via reflection
+     * with main idea to provide better logging of real fail reason
+     *
+     * <p>Once the write operation has been completed, the
+     * {@link BluetoothGattCallback#onCharacteristicWrite} callback is invoked,
+     * reporting the result of the operation.
+     *
+     * <p>Requires {@link android.Manifest.permission#BLUETOOTH} permission.
+     *
+     * @param characteristic Characteristic to write on the remote device
+     * @return 1, if the read operation was initiated successfully else value from -1 to -A
+     */
+    fun writeCharacteristic(characteristic: BluetoothGattCharacteristic) : Int {
+        if(
+            (characteristic.properties.and(BluetoothGattCharacteristic.PROPERTY_WRITE) == 0) &&
+            (characteristic.properties.and(BluetoothGattCharacteristic.PROPERTY_WRITE_NO_RESPONSE) == 0)
+        ) return  -1
+
+        try {
+            val mServiceField = BluetoothGatt::class.java.getDeclaredField("mService").apply {
+                isAccessible = true
+            }
+            val mClientIfField = BluetoothGatt::class.java.getDeclaredField("mClientIf").apply {
+                isAccessible = true
+            }
+            val mServiceFieldReference = mServiceField.get(gatt) ?: return -2
+            val mClientIfValue = mClientIfField.getInt(gatt)
+            if (mClientIfValue == 0) return -3
+
+            val service = characteristic.service ?: return -4
+            if (characteristic.value == null) return -5
+
+            /*
+             * It just not working
+             */
+//            val getDeviceMethod = service::class.java.getDeclaredMethod("getDevice")
+//            val deviceReference = getDeviceMethod.invoke(service) ?: return -6
+            val deviceReference = gatt.device ?: return -6
+
+            val mDeviceBusyLockField =
+                BluetoothGatt::class.java.getDeclaredField("mDeviceBusyLock").apply {
+                    isAccessible = true
+                }
+            val mDeviceLockReference = mDeviceBusyLockField.get(gatt) ?: return -7
+            val mDeviceBusyField = BluetoothGatt::class.java.getDeclaredField("mDeviceBusy").apply {
+                isAccessible = true
+            }
+
+            synchronized(mDeviceLockReference) {
+                val mDeviceBusyValue = mDeviceBusyField.get(gatt)
+                if (mDeviceBusyValue as Boolean) return -8
+                mDeviceBusyField.set(gatt, true)
+            }
+
+            try {
+                val mServiceWriteCharacteristicMethod =
+                    mServiceFieldReference::class.java.getDeclaredMethod(
+                        "writeCharacteristic",
+                        Int::class.java, // mClientIf
+                        String::class.java, // device address
+                        Int::class.java, // instance id
+                        Int::class.java, // write type
+                        Int::class.java, // auth type
+                        ByteArray::class.java // char value
+                    ).apply {
+                        isAccessible = true
+                    }
+                mServiceWriteCharacteristicMethod.invoke(
+                    mServiceFieldReference,
+                    mClientIfValue,
+                    (deviceReference as BluetoothDevice).address,
+                    characteristic.instanceId,
+                    characteristic.writeType,
+                    AUTHENTICATION_NONE,
+                    characteristic.value
+                )
+            } catch (tr: RemoteException) {
+                mDeviceBusyField.set(gatt, true)
+                Log.e(TAG, "writeCharacteristic : Remote exception", tr)
+                return -9
+            }
+
+            return 1
+        } catch (tr: Throwable) {
+            Log.e(TAG, "writeCharacteristic : throwable caught", tr)
+            return -0xA
+        }
+    }
+
 }

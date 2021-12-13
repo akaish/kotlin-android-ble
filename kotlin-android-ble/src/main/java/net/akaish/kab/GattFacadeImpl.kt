@@ -632,21 +632,38 @@ class GattFacadeImpl(override val device: BluetoothDevice,
                 }
                 callbacks[target] = writeCallback
                 target.value = bytes
-                var tryCounter = 0
-                while (tryCounter != retryGattOperationsTime) {
-                    tryCounter++
-                    if (!gatt.writeCharacteristic(target)) {
-                        if(tryCounter == retryGattOperationsTime) {
-                            l?.e("${deviceTag()} WRITE ERROR : DEVICE IS BUSY; CHAR ${target.uuid}")
-                            callbacks.remove(target)
-                            continuation.resume(WriteResult.DeviceIsBusy)
-                            return@post
-                        } else {
-                            l?.w("${deviceTag()} WRITE ERROR : DEVICE IS BUSY; CHAR ${target.uuid}, NEXT TRY")
-                            Thread.sleep(5)
-                        }
-                    } else break
+                // var tryCounter = 0
+
+                val writeInitializationResult = try {
+                    gattWrapper.writeCharacteristic(target)
+                } catch (tr: Throwable) {
+                    callbacks.remove(target)
+                    l?.e("${deviceTag()} WRITE ERROR : WRITE INITIALIZATION ERROR C = 0; CHAR ${target.uuid}", tr)
+                    continuation.resume(WriteResult.WriteInitiateFailure(0, tr))
+                    return@post
                 }
+
+                if(writeInitializationResult != 1) {
+                    callbacks.remove(target)
+                    l?.e("${deviceTag()} WRITE ERROR : WRITE INITIALIZATION ERROR C = $writeInitializationResult; CHAR ${target.uuid}")
+                    continuation.resume(WriteResult.WriteInitiateFailure(writeInitializationResult, null))
+                    return@post
+                }
+
+//                while (tryCounter != retryGattOperationsTime) {
+//                    tryCounter++
+//                    if (!gatt.writeCharacteristic(target)) {
+//                        if(tryCounter == retryGattOperationsTime) {
+//                            l?.e("${deviceTag()} WRITE ERROR : DEVICE IS BUSY; CHAR ${target.uuid}")
+//                            callbacks.remove(target)
+//                            continuation.resume(WriteResult.DeviceIsBusy)
+//                            return@post
+//                        } else {
+//                            l?.w("${deviceTag()} WRITE ERROR : DEVICE IS BUSY; CHAR ${target.uuid}, NEXT TRY")
+//                            Thread.sleep(5)
+//                        }
+//                    } else break
+//                }
             } catch (tr: Throwable) {
                 if (tr is TimeoutCancellationException) {
                     callbacks.remove(target)

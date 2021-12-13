@@ -50,7 +50,7 @@ sealed class ReadResult : BLEResult {
 
         override fun toString(): String {
             val sb = StringBuilder()
-            sb.append("ReadResult: Device is busy; code = $code!")
+            sb.append("ReadResult: operation failed; code = $code!")
             tr?.let {
                 sb.append('\n')
                 sb.append(it.javaClass.canonicalName)
