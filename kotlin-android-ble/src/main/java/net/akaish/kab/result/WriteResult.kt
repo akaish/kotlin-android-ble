@@ -41,6 +41,26 @@ sealed class WriteResult : BLEResult {
     }
 
     /**
+     * Read failure
+     */
+    class WriteInitiateFailure(private val code: Int,
+                               private val tr: Throwable?) : WriteResult() {
+        override fun toThrowable(): BleException? = BleOperationInitializationFailure(toString(), this)
+
+        override fun toString(): String {
+            val sb = StringBuilder()
+            sb.append("WriteResult: operation failed; code = $code!")
+            tr?.let {
+                sb.append('\n')
+                sb.append(it.javaClass.canonicalName)
+                sb.append('\n')
+                sb.append(it.stackTraceToString())
+            }
+            return sb.toString()
+        }
+    }
+
+    /**
      * Device callback already exists
      */
     object OperationCallbackAlreadyExists : WriteResult() {

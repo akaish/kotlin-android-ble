@@ -54,11 +54,9 @@ import net.akaish.kab.model.BleConnectionState.Companion.B_STATE_DISCONNECTED
 import net.akaish.kab.model.BleConnectionState.Companion.B_STATE_DISCONNECTING
 import net.akaish.kab.model.BleConnectionState.Companion.B_STATE_SERVICES_DISCOVERY_ERROR
 import net.akaish.kab.result.*
+import net.akaish.kab.utility.*
 import net.akaish.kab.utility.ConnectDisconnectCounter
-import net.akaish.kab.utility.GattCode
 import net.akaish.kab.utility.GattCode.GATT_SUCCESS
-import net.akaish.kab.utility.Hex
-import net.akaish.kab.utility.ILogger
 import java.util.*
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.TimeUnit
@@ -83,9 +81,11 @@ class GattFacadeImpl(override val device: BluetoothDevice,
                      override val serviceDiscoveryStartTimeout: Long? = SERVICE_DISCOVERY_DELAY_DEFAULTS,
                      @IntRange(from = 1, to = Int.MAX_VALUE.toLong())
                      override val retryGattOperationsTime: Int = 1,
-                     override val useCustomHandlerSinceApi: Int? = null) : IGattFacade {
+                     override val useCustomHandlerSinceApi: Int? = null,
+                     override val useDebugWrapper: Boolean = false) : IGattFacade {
 
     private lateinit var gatt: BluetoothGatt
+    private var gattWrapper: BluetoothGattDebugWrapper? = null
     private val mainThreadHandler = Handler(Looper.getMainLooper())
     private val bgThread = HandlerThread("GattFacadeImpl").apply { start() }
     private val bgThreadHandler = Handler(bgThread.looper)
@@ -145,6 +145,8 @@ class GattFacadeImpl(override val device: BluetoothDevice,
                         )
                     }
                 }
+                if(useDebugWrapper)
+                    gattWrapper = BluetoothGattDebugWrapper(gatt)
                 ConnectDisconnectCounter.connection(uuid)
             }
         }
@@ -228,10 +230,6 @@ class GattFacadeImpl(override val device: BluetoothDevice,
             l?.w("${deviceTag()}  MTU request is unsupported on Android version ${Build.VERSION.SDK_INT}, returning default MTU value.")
             this.mtuFlow.value = MTU_DEFAULT
             return MTUResult.MTUSuccess(MTU_DEFAULT)
-        }
-        if(deviceState.value.bleConnectionState.stateId != BluetoothAdapter.STATE_CONNECTED) {
-            l?.e("${deviceTag()} UNABLE TO EXECUTE MTU REQUEST: DEVICE IS NOT CONNECTED!")
-            return MTUResult.OperationException(IllegalStateException("${deviceTag()} UNABLE TO EXECUTE MTU REQUEST: DEVICE IS NOT CONNECTED!"))
         }
         val timeoutMs = timeUnit.toMillis(timeout)
         val result: MTUResult
@@ -541,21 +539,42 @@ class GattFacadeImpl(override val device: BluetoothDevice,
                     return@post
                 }
                 callbacks[target] = callback
-                var tryCounter = 0
-                while (tryCounter != retryGattOperationsTime) {
-                    tryCounter++
-                    if (!gatt.readCharacteristic(target)) {
-                        if(tryCounter == retryGattOperationsTime) {
-                            callbacks.remove(target)
-                            l?.e("${deviceTag()} READ ERROR : DEVICE IS BUSY; CHAR ${target.uuid}")
-                            continuation.resume(ReadResult.DeviceIsBusy)
-                            return@post
-                        } else {
-                            l?.w("${deviceTag()} READ ERROR : DEVICE IS BUSY; CHAR ${target.uuid}, NEXT TRY")
-                            Thread.sleep(5)
-                        }
-                    } else break
+
+                val gattDebugWrapper = gattWrapper
+                if(gattDebugWrapper == null) {
+                    var tryCounter = 0
+                    while (tryCounter != retryGattOperationsTime) {
+                        tryCounter++
+                        if (!gatt.readCharacteristic(target)) {
+                            if(tryCounter == retryGattOperationsTime) {
+                                callbacks.remove(target)
+                                l?.e("${deviceTag()} READ ERROR : DEVICE IS BUSY; CHAR ${target.uuid}")
+                                continuation.resume(ReadResult.DeviceIsBusy)
+                                return@post
+                            } else {
+                                l?.w("${deviceTag()} READ ERROR : DEVICE IS BUSY; CHAR ${target.uuid}, NEXT TRY")
+                                Thread.sleep(5)
+                            }
+                        } else break
+                    }
+                } else {
+                    val readInitializationResult = try {
+                        gattDebugWrapper.readCharacteristic(target)
+                    } catch (tr: Throwable) {
+                        callbacks.remove(target)
+                        l?.e("${deviceTag()} READ ERROR : READ INITIALIZATION ERROR C = 0; CHAR ${target.uuid}", tr)
+                        continuation.resume(ReadResult.ReadInitiateFailure(0, tr))
+                        return@post
+                    }
+
+                    if(readInitializationResult != 1) {
+                        callbacks.remove(target)
+                        l?.e("${deviceTag()} READ ERROR : READ INITIALIZATION ERROR C = $readInitializationResult; CHAR ${target.uuid}")
+                        continuation.resume(ReadResult.ReadInitiateFailure(readInitializationResult, null))
+                        return@post
+                    }
                 }
+
             } catch (tr: Throwable) {
                 callbacks.remove(target)
                 if (tr is TimeoutCancellationException) {
@@ -615,20 +634,40 @@ class GattFacadeImpl(override val device: BluetoothDevice,
                 }
                 callbacks[target] = writeCallback
                 target.value = bytes
-                var tryCounter = 0
-                while (tryCounter != retryGattOperationsTime) {
-                    tryCounter++
-                    if (!gatt.writeCharacteristic(target)) {
-                        if(tryCounter == retryGattOperationsTime) {
-                            l?.e("${deviceTag()} WRITE ERROR : DEVICE IS BUSY; CHAR ${target.uuid}")
-                            callbacks.remove(target)
-                            continuation.resume(WriteResult.DeviceIsBusy)
-                            return@post
-                        } else {
-                            l?.w("${deviceTag()} WRITE ERROR : DEVICE IS BUSY; CHAR ${target.uuid}, NEXT TRY")
-                            Thread.sleep(5)
-                        }
-                    } else break
+
+                val gattDebugWrapper = gattWrapper
+                if(gattDebugWrapper == null) {
+                    var tryCounter = 0
+                    while (tryCounter != retryGattOperationsTime) {
+                        tryCounter++
+                        if (!gatt.writeCharacteristic(target)) {
+                            if(tryCounter == retryGattOperationsTime) {
+                                l?.e("${deviceTag()} WRITE ERROR : DEVICE IS BUSY; CHAR ${target.uuid}")
+                                callbacks.remove(target)
+                                continuation.resume(WriteResult.DeviceIsBusy)
+                                return@post
+                            } else {
+                                l?.w("${deviceTag()} WRITE ERROR : DEVICE IS BUSY; CHAR ${target.uuid}, NEXT TRY")
+                                Thread.sleep(5)
+                            }
+                        } else break
+                    }
+                } else {
+                    val writeInitializationResult = try {
+                        gattDebugWrapper.writeCharacteristic(target)
+                    } catch (tr: Throwable) {
+                        callbacks.remove(target)
+                        l?.e("${deviceTag()} WRITE ERROR : WRITE INITIALIZATION ERROR C = 0; CHAR ${target.uuid}", tr)
+                        continuation.resume(WriteResult.WriteInitiateFailure(0, tr))
+                        return@post
+                    }
+
+                    if(writeInitializationResult != 1) {
+                        callbacks.remove(target)
+                        l?.e("${deviceTag()} WRITE ERROR : WRITE INITIALIZATION ERROR C = $writeInitializationResult; CHAR ${target.uuid}")
+                        continuation.resume(WriteResult.WriteInitiateFailure(writeInitializationResult, null))
+                        return@post
+                    }
                 }
             } catch (tr: Throwable) {
                 if (tr is TimeoutCancellationException) {

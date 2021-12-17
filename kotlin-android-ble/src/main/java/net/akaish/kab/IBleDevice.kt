@@ -77,6 +77,14 @@ interface IBleDevice {
 
     val desiredPhyLe: Int
 
+    /**
+     * Flag that enables debug wrapper [net.akaish.kab.utility.BluetoothGattDebugWrapper]
+     * For running gatt characteristics RW operations with gatt debug wrapper,
+     * something like [https://github.com/ChickenHook/RestrictionBypass](https://github.com/ChickenHook/RestrictionBypass)
+     * or free reflection library required for accessing blacklisted private API via reflection.
+     */
+    val useDebugWrapper: Boolean
+
     //----------------------------------------------------------------------------------------------
     // Gatt configuration
     //----------------------------------------------------------------------------------------------

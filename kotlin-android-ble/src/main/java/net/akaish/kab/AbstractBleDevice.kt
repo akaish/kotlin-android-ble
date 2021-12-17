@@ -52,6 +52,7 @@ import net.akaish.kab.result.ReadResult
 import net.akaish.kab.result.SubscriptionResult
 import net.akaish.kab.result.WriteResult
 import net.akaish.kab.utility.BleLogger
+import net.akaish.kab.utility.BluetoothGattDebugWrapper
 import net.akaish.kab.utility.ILogger
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
@@ -73,7 +74,8 @@ abstract class AbstractBleDevice(override val disableExceptions: AtomicBoolean,
                                  override val serviceDiscoveryDelay: Long? = SERVICE_DISCOVERY_DELAY_DEFAULTS,
                                  @IntRange(from = 1, to = Int.MAX_VALUE.toLong())
                                  override val retryGattOperationsTime: Int = 1,
-                                 override val useCustomHandlerSinceApi: Int? = null) : IBleScopedDevice {
+                                 override val useCustomHandlerSinceApi: Int? = null,
+                                 override val useDebugWrapper: Boolean) : IBleScopedDevice {
 
     /**
      * Instance of GattCallback instance where all magic of flattening callbacks into raw coroutine
