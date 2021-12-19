@@ -82,6 +82,7 @@ interface IBleDevice {
      * For running gatt characteristics RW operations with gatt debug wrapper,
      * something like [https://github.com/ChickenHook/RestrictionBypass](https://github.com/ChickenHook/RestrictionBypass)
      * or free reflection library required for accessing blacklisted private API via reflection.
+     * Also, such libs requires min API = 19
      */
     val useDebugWrapper: Boolean
 

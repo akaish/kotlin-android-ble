@@ -117,7 +117,8 @@ abstract class AbstractBleDevice(override val disableExceptions: AtomicBoolean,
                     disconnectedTimeout = disconnectedTimeout,
                     disconnectedEventDelay = disconnectedEventDelay,
                     serviceDiscoveryStartTimeout = serviceDiscoveryDelay,
-                    retryGattOperationsTime = retryGattOperationsTime)
+                    retryGattOperationsTime = retryGattOperationsTime,
+                    useDebugWrapper = useDebugWrapper)
                 scope.launch(coroutineContext) {
                     facadeImpl.deviceState.collect {
                         if (it.bleConnectionState is BleConnectionState.Disconnected) {
